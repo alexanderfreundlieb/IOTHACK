@@ -41,7 +41,7 @@
       "pv_peak_kwp": 0.0,
       "battery_capacity_kwh": 0.0,
       "battery_max_rate_kwh": 0.0,
-      "base_consumption_kwh_per_hour": 0.8
+      "base_consumption_kwh_per_hour": 0.9
     }
   ],
 

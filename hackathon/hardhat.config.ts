@@ -32,7 +32,7 @@ export default defineConfig({
       type: "http",
       url: "https://ethereum-sepolia-rpc.publicnode.com",
       chainType: "l1",
-      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")], // DEPLOY PRIVATE KEY
+      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
     },
   },
 });
