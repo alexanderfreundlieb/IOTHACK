@@ -1,0 +1,33 @@
+{
+  "_format": "hh3-artifact-1",
+  "contractName": "IIncentiveController",
+  "sourceName": "contracts/interfaces/IIncentiveController.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "household",
+          "type": "address"
+        }
+      ],
+      "name": "getPriceMultiplier",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "multiplier",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {},
+  "immutableReferences": {},
+  "inputSourceName": "project/contracts/interfaces/IIncentiveController.sol",
+  "buildInfoId": "solc-0_8_34-3b8ef94bcc9e07d52aaaca498b0371679ee7afd9"
+}

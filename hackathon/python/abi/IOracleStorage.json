@@ -1,0 +1,158 @@
+{
+  "_format": "hh3-artifact-1",
+  "contractName": "IOracleStorage",
+  "sourceName": "contracts/interfaces/IOracleStorage.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "getCurrentSlot",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "household",
+          "type": "address"
+        }
+      ],
+      "name": "getLatestBatteryState",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "socPercent",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "capacityWh",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxRateWh",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "timestamp",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IOracleStorage.BatteryState",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "household",
+          "type": "address"
+        }
+      ],
+      "name": "getLatestMeterReading",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "consumptionWh",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "productionWh",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "timestamp",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IOracleStorage.MeterReading",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getLatestWeather",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "irradianceWm2",
+              "type": "uint256"
+            },
+            {
+              "internalType": "int256",
+              "name": "temperatureC",
+              "type": "int256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "cloudCover",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "timestamp",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IOracleStorage.WeatherData",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "household",
+          "type": "address"
+        }
+      ],
+      "name": "isHouseholdRegistered",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {},
+  "immutableReferences": {},
+  "inputSourceName": "project/contracts/interfaces/IOracleStorage.sol",
+  "buildInfoId": "solc-0_8_34-3b8ef94bcc9e07d52aaaca498b0371679ee7afd9"
+}
