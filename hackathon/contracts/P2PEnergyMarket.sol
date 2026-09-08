@@ -280,7 +280,7 @@ contract P2PEnergyMarket {
                 address consumer = households[consumerIdx[j]];
 
                 // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion)
-                uint256 amountPaid = (flowWh * energyPricePerKwh) / 1000;
+                uint256 amountPaid = calculateCost(flowWh);
 
                 // Step 5 (next): stablecoin.transferFrom(consumer, producer, amountPaid);
                 stablecoin.transferFrom(consumer, producer, amountPaid);
