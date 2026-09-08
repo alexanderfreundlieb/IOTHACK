@@ -1,7 +1,9 @@
 .DS_Store
-python/.env
-python/venv/
-python/__pycache__/
+.env
+starter/python/venv/
+starter/python/__pycache__/
+hackathon/python/venv/
+hackathon/python/__pycache__/
 **/__pycache__/
 *.pyc
 data/history.db
