@@ -262,7 +262,8 @@ contract P2PEnergyMarket {
             }
         }
 
-        require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
+        // removed for now since energy balance may not always zero out, since energy can also just be lost/not used."
+        // require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
 
         // flow(i → j) = surplus_i × (deficit_j / total_deficit)
 
