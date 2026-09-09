@@ -269,7 +269,7 @@ contract P2PEnergyMarket {
                 stablecoin.transferFrom(consumer, producer, amountPaid);
 
                 // Step 6 (next): emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
-                //emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
+                emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
 
                 totalEnergyTraded += flowWh;
                 totalAmountPaid += amountPaid;
