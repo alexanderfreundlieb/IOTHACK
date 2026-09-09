@@ -86,6 +86,7 @@ class OracleWriter:
         )
 
         self.simulator = EnergySimulator(CONFIG_PATH)
+        self.simulator.start_real_time -= 6 * 60 * 60   # 21600s = 6 hours
         self.chain_id = bc["chain_id"]
 
     # ─────────────────────────────────────────────────────────────
