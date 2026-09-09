@@ -282,7 +282,7 @@ contract P2PEnergyMarket {
         // removed for now since energy balance may not always zero out, since energy can also just be lost/not used."
         // require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
         totalSurplus;   // nur für die (auskommentierte) Bilanzpruefung oben
-        }               // Ende Klassifizierungs-Block: netProduction/totalSurplus sind ab hier weg
+                        // Ende Klassifizierungs-Block: netProduction/totalSurplus sind ab hier weg
 
         // flow(i → j) = surplus_i × (deficit_j / total_deficit)
         // producer i and consumer j
@@ -303,14 +303,21 @@ contract P2PEnergyMarket {
                 // Steps 4-6 stecken in _executeTrade(): ausgelagert, weil die
                 // lokalen Variablen (producer, consumer, amountPaid) sonst
                 // zusammen mit den Matching-Arrays "Stack too deep" auslösen.
-                uint256 amountPaid = _executeTrade(
+                // try/catch (nur für external calls möglich, daher this.):
+                // ein einzelner fehlschlagender Trade (z.B. fehlendes/zu
+                // niedriges approve() eines Konsumenten) soll nicht den
+                // gesamten Slot für alle Haushalte blockieren.
+                try this._executeTrade(
                     households[producerIdx[i]],
                     households[consumerIdx[j]],
                     flowWh
-                );
-
-                totalEnergyTraded += flowWh;
-                totalAmountPaid += amountPaid;
+                ) returns (uint256 amountPaid) {
+                    totalEnergyTraded += flowWh;
+                    totalAmountPaid += amountPaid;
+                } catch {
+                    // dieser Trade fehlgeschlagen -> ueberspringen, Rest des
+                    // Slots wird trotzdem abgerechnet
+                }
 
             }
         }    
@@ -325,7 +332,9 @@ contract P2PEnergyMarket {
         address producer,
         address consumer,
         uint256 flowWh
-    ) internal returns (uint256) {
+    ) external returns (uint256) {
+        require(msg.sender == address(this), "internal only");
+
         // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion)
         uint256 amountPaid = calculateCost(flowWh);
 
