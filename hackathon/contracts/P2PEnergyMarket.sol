@@ -201,33 +201,11 @@ contract P2PEnergyMarket {
      */
     function settleSlot() external {
 
-        // Matching-Ergebnis: welcher Haushalt liefert/braucht wie viel.
-        // Bewusst VOR dem Block unten deklariert - alles, was nur fuer die
-        // Klassifizierung gebraucht wird, lebt im Block und wird danach vom
-        // Stack geraeumt (sonst "Stack too deep" in der Handelsschleife).
-        uint256[] memory producerIdx = new uint256[](households.length);
-        uint256[] memory producerAmt = new uint256[](households.length);
-        uint256 producerCount = 0;
-
-        uint256[] memory consumerIdx = new uint256[](households.length);
-        uint256[] memory consumerAmt = new uint256[](households.length);
-        uint256 consumerCount = 0;
-
-        uint256 totalDeficit = 0;
-
-        {
         // get current slot state
         uint256 currentSlot = oracle.getCurrentSlot();
 
         require(currentSlot > lastSettledSlot, "Current slot is already settled");
-
-        // Step 7 vorgezogen: der Slot wird als abgerechnet markiert, BEVOR die
-        // Transfers laufen. Erstens ist damit `currentSlot` nach dem Block vom
-        // Stack weg (Platz fuer die Handelsschleife, sie liest stattdessen
-        // lastSettledSlot), zweitens ist das die reentrancy-sichere Reihenfolge:
-        // State-Update vor externem Call.
-        lastSettledSlot = currentSlot;
-
+        
         // iterating through all households
         int256[] memory netProduction = new int256[](households.length);
 
@@ -258,10 +236,9 @@ contract P2PEnergyMarket {
             }
         }
 
-        // Matching
-
-        // producer i and consumer j
+        // 3. Matche Produzenten mit Konsumenten (proportional)
         uint256 totalSurplus = 0;
+        uint256 totalDeficit = 0;
 
         /**
         uint256[] memory producers = new uint256[](households.length);
@@ -280,6 +257,14 @@ contract P2PEnergyMarket {
 
         } */
         
+        uint256[] memory producerIdx = new uint256[](households.length);
+        uint256[] memory producerAmt = new uint256[](households.length);
+        uint256 producerCount = 0;
+
+        uint256[] memory consumerIdx = new uint256[](households.length);
+        uint256[] memory consumerAmt = new uint256[](households.length);
+        uint256 consumerCount = 0;
+
         for (uint256 i = 0; i < netProduction.length; i++) {
             if (netProduction[i] > 0) {
                 producerIdx[producerCount] = i;               // <-- remembers WHICH household
@@ -300,9 +285,13 @@ contract P2PEnergyMarket {
         }               // Ende Klassifizierungs-Block: netProduction/totalSurplus sind ab hier weg
 
         // flow(i → j) = surplus_i × (deficit_j / total_deficit)
+        // producer i and consumer j
 
         uint256 totalEnergyTraded = 0;
         uint256 totalAmountPaid = 0;
+
+        // 7. Setze lastSettledSlot auf currentSlot --> before settle loop to avoid re-entrancy attacks
+        lastSettledSlot = currentSlot;
         
         // each flow is computed and acted on immediately
         for (uint256 i = 0; i < producerCount; i++) {
@@ -324,8 +313,8 @@ contract P2PEnergyMarket {
                 totalAmountPaid += amountPaid;
 
             }
-        }
-    
+        }    
+
         // Step 8
         emit SlotSettled(lastSettledSlot, totalEnergyTraded, totalAmountPaid);
     }
