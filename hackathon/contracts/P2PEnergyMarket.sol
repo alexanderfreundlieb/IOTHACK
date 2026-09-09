@@ -201,11 +201,33 @@ contract P2PEnergyMarket {
      */
     function settleSlot() external {
 
+        // Matching-Ergebnis: welcher Haushalt liefert/braucht wie viel.
+        // Bewusst VOR dem Block unten deklariert - alles, was nur fuer die
+        // Klassifizierung gebraucht wird, lebt im Block und wird danach vom
+        // Stack geraeumt (sonst "Stack too deep" in der Handelsschleife).
+        uint256[] memory producerIdx = new uint256[](households.length);
+        uint256[] memory producerAmt = new uint256[](households.length);
+        uint256 producerCount = 0;
+
+        uint256[] memory consumerIdx = new uint256[](households.length);
+        uint256[] memory consumerAmt = new uint256[](households.length);
+        uint256 consumerCount = 0;
+
+        uint256 totalDeficit = 0;
+
+        {
         // get current slot state
         uint256 currentSlot = oracle.getCurrentSlot();
-        
+
         require(currentSlot > lastSettledSlot, "Current slot is already settled");
-        
+
+        // Step 7 vorgezogen: der Slot wird als abgerechnet markiert, BEVOR die
+        // Transfers laufen. Erstens ist damit `currentSlot` nach dem Block vom
+        // Stack weg (Platz fuer die Handelsschleife, sie liest stattdessen
+        // lastSettledSlot), zweitens ist das die reentrancy-sichere Reihenfolge:
+        // State-Update vor externem Call.
+        lastSettledSlot = currentSlot;
+
         // iterating through all households
         int256[] memory netProduction = new int256[](households.length);
 
@@ -215,13 +237,31 @@ contract P2PEnergyMarket {
             IOracleStorage.MeterReading memory lastReading = oracle.getLatestMeterReading(household);
 
             netProduction[i] = int256 (lastReading.productionWh) - int256 (lastReading.consumptionWh);
+
+            // Phase 2: Batterie-Entscheidung VOR der Klassifizierung einrechnen,
+            // damit Handel und Batterie-Strategie konsistent sind.
+            // isManaged() zuerst pruefen: decideAction() revertet für nicht
+            // verwaltete Haushalte und wuerde sonst den Slot für alle blockieren.
+            if (address(batteryManager) != address(0)
+                && batteryManager.isManaged(household)) {
+                try batteryManager.decideAction(household)
+                    returns (IBatteryManager.Action action, uint256 amountWh) {
+                    if (action == IBatteryManager.Action.CHARGE) {
+                        netProduction[i] -= int256(amountWh);   // Energie bleibt im Haushalt
+                    } else if (action == IBatteryManager.Action.DISCHARGE) {
+                        netProduction[i] += int256(amountWh);   // Batterie liefert zusätzlich
+                    }
+                } catch {
+                    // Batterie-Call fehlgeschlagen -> ignorieren, der Handel
+                    // läuft mit dem urspruenglichen Netto weiter.
+                }
+            }
         }
 
         // Matching
 
         // producer i and consumer j
         uint256 totalSurplus = 0;
-        uint256 totalDeficit = 0;
 
         /**
         uint256[] memory producers = new uint256[](households.length);
@@ -240,14 +280,6 @@ contract P2PEnergyMarket {
 
         } */
         
-        uint256[] memory producerIdx = new uint256[](households.length);
-        uint256[] memory producerAmt = new uint256[](households.length);
-        uint256 producerCount = 0;
-
-        uint256[] memory consumerIdx = new uint256[](households.length);
-        uint256[] memory consumerAmt = new uint256[](households.length);
-        uint256 consumerCount = 0;
-
         for (uint256 i = 0; i < netProduction.length; i++) {
             if (netProduction[i] > 0) {
                 producerIdx[producerCount] = i;               // <-- remembers WHICH household
@@ -264,6 +296,8 @@ contract P2PEnergyMarket {
 
         // removed for now since energy balance may not always zero out, since energy can also just be lost/not used."
         // require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
+        totalSurplus;   // nur für die (auskommentierte) Bilanzpruefung oben
+        }               // Ende Klassifizierungs-Block: netProduction/totalSurplus sind ab hier weg
 
         // flow(i → j) = surplus_i × (deficit_j / total_deficit)
 
@@ -277,29 +311,42 @@ contract P2PEnergyMarket {
                 
                 if (flowWh == 0) continue;
 
-                address producer = households[producerIdx[i]];
-                address consumer = households[consumerIdx[j]];
-
-                // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion)
-                uint256 amountPaid = calculateCost(flowWh);
-
-                // Step 5 (next): stablecoin.transferFrom(consumer, producer, amountPaid);
-                stablecoin.transferFrom(consumer, producer, amountPaid);
-
-                // Step 6 (next): emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
-                emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
+                // Steps 4-6 stecken in _executeTrade(): ausgelagert, weil die
+                // lokalen Variablen (producer, consumer, amountPaid) sonst
+                // zusammen mit den Matching-Arrays "Stack too deep" auslösen.
+                uint256 amountPaid = _executeTrade(
+                    households[producerIdx[i]],
+                    households[consumerIdx[j]],
+                    flowWh
+                );
 
                 totalEnergyTraded += flowWh;
                 totalAmountPaid += amountPaid;
-                
-            }
-        }    
-    
-        // Step 7
-        lastSettledSlot = currentSlot;
 
+            }
+        }
+    
         // Step 8
         emit SlotSettled(lastSettledSlot, totalEnergyTraded, totalAmountPaid);
+    }
+
+    /// @dev Fuehrt einen einzelnen Match aus: Preis berechnen, Token
+    ///      transferieren, Event emittieren. Rueckgabe = bezahlter Betrag.
+    function _executeTrade(
+        address producer,
+        address consumer,
+        uint256 flowWh
+    ) internal returns (uint256) {
+        // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion)
+        uint256 amountPaid = calculateCost(flowWh);
+
+        // Step 5: Konsument muss vorher approve() aufgerufen haben.
+        stablecoin.transferFrom(consumer, producer, amountPaid);
+
+        // Step 6: lastSettledSlot ist der gerade abgerechnete Slot (oben gesetzt).
+        emit EnergyTraded(producer, consumer, flowWh, amountPaid, lastSettledSlot);
+
+        return amountPaid;
     }
 
     // ─────────────────────────────────────────────────────────────
