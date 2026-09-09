@@ -251,6 +251,9 @@ contract P2PEnergyMarket {
 
         uint256 totalEnergyTraded = 0;
         uint256 totalAmountPaid = 0;
+
+        // 7. Setze lastSettledSlot auf currentSlot --> before settle loop to avoid re-entrancy attacks
+        lastSettledSlot = currentSlot;
         
         // each flow is computed and acted on immediately
         for (uint256 i = 0; i < producerCount; i++) {
@@ -276,9 +279,6 @@ contract P2PEnergyMarket {
                 
             }
         }    
-    
-        // 7. Setze lastSettledSlot auf currentSlot
-        lastSettledSlot = currentSlot;
 
         // 8. Emit SlotSettled
         emit SlotSettled(lastSettledSlot, totalEnergyTraded, totalAmountPaid);
