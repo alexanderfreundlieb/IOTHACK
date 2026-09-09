@@ -201,12 +201,12 @@ contract P2PEnergyMarket {
      */
     function settleSlot() external {
 
-        // get current slot state
+        // Step 1. Hole currentSlot vom Oracle und prüfe, dass er > lastSettledSlot ist
         uint256 currentSlot = oracle.getCurrentSlot();
         
         require(currentSlot > lastSettledSlot, "Current slot is already settled");
         
-        // iterating through all households
+        // 2. Iteriere über alle households: MeterReading lesen, Netto berechnen
         int256[] memory netProduction = new int256[](households.length);
 
         for (uint256 i = 0; i < households.length; i++) {
@@ -217,28 +217,9 @@ contract P2PEnergyMarket {
             netProduction[i] = int256 (lastReading.productionWh) - int256 (lastReading.consumptionWh);
         }
 
-        // Matching
-
-        // producer i and consumer j
+        // 3. Matche Produzenten mit Konsumenten (proportional)
         uint256 totalSurplus = 0;
         uint256 totalDeficit = 0;
-
-        /**
-        uint256[] memory producers = new uint256[](households.length);
-        uint256[] memory consumers = new uint256[](households.length);
-        
-        for (uint256 i = 0; i < netProduction.length; i++) {
-            if (netProduction[i] > 0) {
-                totalSurplus += netProduction[i];
-                producers[] += netProduction[i];
-
-            } else if (netProduction[i] < 0) {
-                totalDeficit += netProduction[i];
-                consumers[] += netProduction[i];
-
-            }     
-
-        } */
         
         uint256[] memory producerIdx = new uint256[](households.length);
         uint256[] memory producerAmt = new uint256[](households.length);
@@ -266,6 +247,7 @@ contract P2PEnergyMarket {
         // require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
 
         // flow(i → j) = surplus_i × (deficit_j / total_deficit)
+        // producer i and consumer j
 
         uint256 totalEnergyTraded = 0;
         uint256 totalAmountPaid = 0;
@@ -287,7 +269,7 @@ contract P2PEnergyMarket {
                 stablecoin.transferFrom(consumer, producer, amountPaid);
 
                 // Step 6 (next): emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
-                emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
+                //emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
 
                 totalEnergyTraded += flowWh;
                 totalAmountPaid += amountPaid;
@@ -295,10 +277,10 @@ contract P2PEnergyMarket {
             }
         }    
     
-        // Step 7
+        // 7. Setze lastSettledSlot auf currentSlot
         lastSettledSlot = currentSlot;
 
-        // Step 8
+        // 8. Emit SlotSettled
         emit SlotSettled(lastSettledSlot, totalEnergyTraded, totalAmountPaid);
     }
 
