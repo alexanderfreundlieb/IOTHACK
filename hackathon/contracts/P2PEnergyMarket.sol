@@ -200,9 +200,106 @@ contract P2PEnergyMarket {
      *    8. Emit SlotSettled
      */
     function settleSlot() external {
-        // TODO: Implementierung durch Team
 
-        revert("Not implemented yet - this is your job!");
+        // get current slot state
+        uint256 currentSlot = oracle.getCurrentSlot();
+        
+        require(currentSlot > lastSettledSlot, "Current slot is already settled");
+        
+        // iterating through all households
+        int256[] memory netProduction = new int256[](households.length);
+
+        for (uint256 i = 0; i < households.length; i++) {
+            address household = households[i];
+
+            IOracleStorage.MeterReading memory lastReading = oracle.getLatestMeterReading(household);
+
+            netProduction[i] = int256 (lastReading.productionWh) - int256 (lastReading.consumptionWh);
+        }
+
+        // Matching
+
+        // producer i and consumer j
+        uint256 totalSurplus = 0;
+        uint256 totalDeficit = 0;
+
+        /**
+        uint256[] memory producers = new uint256[](households.length);
+        uint256[] memory consumers = new uint256[](households.length);
+        
+        for (uint256 i = 0; i < netProduction.length; i++) {
+            if (netProduction[i] > 0) {
+                totalSurplus += netProduction[i];
+                producers[] += netProduction[i];
+
+            } else if (netProduction[i] < 0) {
+                totalDeficit += netProduction[i];
+                consumers[] += netProduction[i];
+
+            }     
+
+        } */
+        
+        uint256[] memory producerIdx = new uint256[](households.length);
+        uint256[] memory producerAmt = new uint256[](households.length);
+        uint256 producerCount = 0;
+
+        uint256[] memory consumerIdx = new uint256[](households.length);
+        uint256[] memory consumerAmt = new uint256[](households.length);
+        uint256 consumerCount = 0;
+
+        for (uint256 i = 0; i < netProduction.length; i++) {
+            if (netProduction[i] > 0) {
+                producerIdx[producerCount] = i;               // <-- remembers WHICH household
+                producerAmt[producerCount] = uint256(netProduction[i]);
+                producerCount++;
+                totalSurplus += uint256(netProduction[i]);
+            } else if (netProduction[i] < 0) {
+                consumerIdx[consumerCount] = i;                // <-- remembers WHICH household
+                consumerAmt[consumerCount] = uint256(-netProduction[i]);
+                consumerCount++;
+                totalDeficit += uint256(-netProduction[i]);
+            }
+        }
+
+        // removed for now since energy balance may not always zero out, since energy can also just be lost/not used."
+        // require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
+
+        // flow(i → j) = surplus_i × (deficit_j / total_deficit)
+
+        uint256 totalEnergyTraded = 0;
+        uint256 totalAmountPaid = 0;
+        
+        // each flow is computed and acted on immediately
+        for (uint256 i = 0; i < producerCount; i++) {
+            for (uint256 j = 0; j < consumerCount; j++) {
+                uint256 flowWh = (producerAmt[i] * consumerAmt[j]) / totalDeficit;
+                
+                if (flowWh == 0) continue;
+
+                address producer = households[producerIdx[i]];
+                address consumer = households[consumerIdx[j]];
+
+                // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion)
+                uint256 amountPaid = calculateCost(flowWh);
+
+                // Step 5 (next): stablecoin.transferFrom(consumer, producer, amountPaid);
+                stablecoin.transferFrom(consumer, producer, amountPaid);
+
+                // Step 6 (next): emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
+                emit EnergyTraded(producer, consumer, flowWh, amountPaid, currentSlot);
+
+                totalEnergyTraded += flowWh;
+                totalAmountPaid += amountPaid;
+                
+            }
+        }    
+    
+        // Step 7
+        lastSettledSlot = currentSlot;
+
+        // Step 8
+        emit SlotSettled(lastSettledSlot, totalEnergyTraded, totalAmountPaid);
     }
 
     // ─────────────────────────────────────────────────────────────

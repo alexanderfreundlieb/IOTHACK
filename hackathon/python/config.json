@@ -9,7 +9,7 @@
   "households": [
     {
       "id": "house_01",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_1",
+      "address": "0xcA5028BEfC157773f7cd7D3047C18eEbD9009c3C",
       "type": "producer_consumer",
       "pv_peak_kwp": 8.0,
       "battery_capacity_kwh": 10.0,
@@ -18,7 +18,7 @@
     },
     {
       "id": "house_02",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_2",
+      "address": "0x6FbB837b9aF78FE3152fC1a5cd31b3B684799415",
       "type": "producer_consumer",
       "pv_peak_kwp": 5.0,
       "battery_capacity_kwh": 7.5,
@@ -27,12 +27,21 @@
     },
     {
       "id": "house_03",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_3",
+      "address": "0x3973ccb4950F2c283Cd593288A1Bcff74dd3097F",
       "type": "consumer_only",
       "pv_peak_kwp": 0.0,
       "battery_capacity_kwh": 0.0,
       "battery_max_rate_kwh": 0.0,
       "base_consumption_kwh_per_hour": 0.8
+    },
+    {
+      "id": "house_04",
+      "address": "0xfc12C5a77C30692D4738E92371152E85fc028705",
+      "type": "consumer_only",
+      "pv_peak_kwp": 0.0,
+      "battery_capacity_kwh": 0.0,
+      "battery_max_rate_kwh": 0.0,
+      "base_consumption_kwh_per_hour": 0.9
     }
   ],
 
@@ -44,12 +53,12 @@
   },
 
   "blockchain": {
-    "rpc_url": "https://rpc.sepolia.org",
+    "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
     "chain_id": 11155111,
-    "oracle_storage_address": "0xREPLACE_AFTER_DEPLOY",
-    "p2p_market_address": "0xREPLACE_AFTER_DEPLOY",
-    "battery_manager_address": "0xREPLACE_AFTER_DEPLOY",
-    "incentive_controller_address": "0xREPLACE_AFTER_DEPLOY",
-    "stablecoin_address": "0xREPLACE_WITH_PROVIDED_TOKEN_ADDRESS"
+    "oracle_storage_address": "0xe08A85857C6E24ABBF36651C9cDA9535820a5A2C",
+    "p2p_market_address": "0xAc0BC3c9d523CfEe5726C1863a98b3eDf8B927b9",
+    "battery_manager_address": "0xa3aCD0f76608A529418B6E6FfB540c869C2FB893",
+    "incentive_controller_address": "0x18eB3E472980E9210C0ad6d42aB93dF98f083310",
+    "stablecoin_address": "0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"
   }
 }
