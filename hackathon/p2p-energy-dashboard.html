@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P2P Energy Market – Control Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0F1417;
+    --panel:#161D22;
+    --panel-alt:#1B2329;
+    --border:#2A343D;
+    --text:#E7EDEF;
+    --text-dim:#8B98A0;
+    --text-faint:#5B666D;
+    --produce:#49C9B0;
+    --consume:#E2A339;
+    --ops:#5B8DEF;
+    --warn:#E1573F;
+    --ok:#49C97A;
+    --font-ui:'IBM Plex Sans',system-ui,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--font-ui);}
+  body{padding:20px 24px 60px;}
+  h1,h2,h3{font-weight:600;margin:0;}
+  .mono{font-family:var(--font-mono);}
+  a{color:var(--ops);}
+
+  /* ── Header ───────────────────────────────────────────── */
+  header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:16px;}
+  header h1{font-size:19px;letter-spacing:.2px;}
+  header .sub{color:var(--text-dim);font-size:13px;margin-top:3px;}
+  .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--text-faint);}
+  .status-dot.on{background:var(--ok);}
+  .status-dot.warn{background:var(--warn);}
+
+  /* ── Config bar ───────────────────────────────────────── */
+  .config{display:grid;grid-template-columns:1.4fr 1fr 1fr .7fr auto auto;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px;margin-bottom:14px;align-items:end;}
+  .config label{display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;}
+  .config input{width:100%;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:7px 8px;border-radius:3px;font-family:var(--font-mono);font-size:12.5px;}
+  .config input:focus{outline:1px solid var(--ops);}
+  button{cursor:pointer;font-family:var(--font-ui);font-size:12.5px;font-weight:500;border-radius:3px;border:1px solid var(--border);background:var(--panel-alt);color:var(--text);padding:8px 12px;transition:background .12s;}
+  button:hover{background:#232D34;}
+  button:disabled{opacity:.4;cursor:not-allowed;}
+  button.primary{background:var(--ops);border-color:var(--ops);color:#0B1116;font-weight:600;}
+  button.primary:hover{background:#6d9bf5;}
+  button.danger{border-color:var(--warn);color:var(--warn);}
+  button:focus-visible{outline:2px solid var(--ops);outline-offset:1px;}
+
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px;color:var(--text-dim);font-size:12.5px;}
+  .toolbar .sep{width:1px;height:18px;background:var(--border);}
+  .toolbar input[type=number]{width:90px;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:6px 7px;border-radius:3px;font-family:var(--font-mono);font-size:12px;}
+
+  /* ── Module toggles ──────────────────────────────────── */
+  .module-toggles{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:20px;padding:10px 12px;background:var(--panel);border:1px solid var(--border);border-radius:4px;}
+  .module-toggles label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);cursor:pointer;user-select:none;}
+  .module-toggles input{accent-color:var(--ops);}
+  .module-toggles label.dis{color:var(--text-faint);text-decoration:line-through;}
+
+  /* ── Grid & panels ───────────────────────────────────── */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--border);border-radius:4px;padding:16px;min-width:0;}
+  .panel.cat-flow{border-left-color:var(--produce);}
+  .panel.cat-finance{border-left-color:var(--consume);}
+  .panel.cat-ops{border-left-color:var(--ops);}
+  .panel h3{font-size:13px;text-transform:none;color:var(--text);}
+  .panel .panel-meta{font-size:11px;color:var(--text-faint);margin-top:2px;margin-bottom:12px;}
+  .span-4{grid-column:span 4;}
+  .span-5{grid-column:span 5;}
+  .span-6{grid-column:span 6;}
+  .span-7{grid-column:span 7;}
+  .span-8{grid-column:span 8;}
+  .span-12{grid-column:span 12;}
+  @media (max-width:980px){ .grid > .panel{grid-column:span 12 !important;} .config{grid-template-columns:1fr 1fr;} }
+
+  .empty{color:var(--text-faint);font-size:12.5px;padding:10px 0;}
+  .err{color:var(--warn);font-size:12px;background:rgba(225,87,63,.08);border:1px solid rgba(225,87,63,.3);padding:8px 10px;border-radius:3px;margin-top:6px;}
+  .ok-msg{color:var(--ok);font-size:12px;background:rgba(73,201,122,.08);border:1px solid rgba(73,201,122,.3);padding:8px 10px;border-radius:3px;margin-top:6px;}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;color:var(--text-faint);font-weight:500;font-size:11px;padding:0 8px 6px 0;border-bottom:1px solid var(--border);}
+  td{padding:6px 8px 6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--font-mono);}
+  tr:last-child td{border-bottom:none;}
+  .addr{color:var(--text);}
+  .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:2px;font-family:var(--font-ui);}
+  .tag.yes{background:rgba(73,201,176,.15);color:var(--produce);}
+  .tag.no{background:rgba(225,87,63,.15);color:var(--warn);}
+
+  .stat-row{display:flex;gap:22px;flex-wrap:wrap;}
+  .stat{min-width:110px;}
+  .stat .v{font-family:var(--font-mono);font-size:20px;font-weight:600;}
+  .stat .l{font-size:11px;color:var(--text-dim);margin-top:2px;}
+  .stat .v.warn{color:var(--warn);}
+  .stat .v.ok{color:var(--ok);}
+
+  select{background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;font-family:var(--font-ui);font-size:12.5px;}
+
+  .flow-legend{display:flex;gap:16px;font-size:11.5px;color:var(--text-dim);margin-bottom:10px;}
+  .flow-legend span{display:inline-flex;align-items:center;gap:5px;}
+  .swatch{width:10px;height:10px;border-radius:2px;display:inline-block;}
+
+  .admin-block{border-top:1px solid var(--border);padding-top:12px;margin-top:12px;}
+  .admin-block:first-child{border-top:none;padding-top:0;margin-top:0;}
+  .admin-block .row{display:flex;gap:8px;margin-top:8px;}
+  .admin-block input{flex:1;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:7px 8px;border-radius:3px;font-family:var(--font-mono);font-size:12px;}
+  .admin-block p{font-size:11.5px;color:var(--text-dim);margin:0;}
+
+  canvas{max-width:100%;}
+  .scroll-y{max-height:320px;overflow-y:auto;}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>P2P Energy Market — Control Panel</h1>
+    <div class="sub"><span id="connDot" class="status-dot"></span><span id="connText">Nicht verbunden</span></div>
+  </div>
+  <div class="sub" style="text-align:right">
+    <div><span id="walletDot" class="status-dot"></span><span id="walletText">Kein Wallet verbunden</span></div>
+  </div>
+</header>
+
+<div class="config">
+  <div>
+    <label>RPC URL</label>
+    <input id="cfgRpc" placeholder="https://sepolia.infura.io/v3/..." value="https://ethereum-sepolia-rpc.publicnode.com">
+  </div>
+  <div>
+    <label>OracleStorage Adresse</label>
+    <input id="cfgOracle" placeholder="0x...">
+  </div>
+  <div>
+    <label>P2PEnergyMarket Adresse</label>
+    <input id="cfgMarket" placeholder="0x...">
+  </div>
+  <div>
+    <label>Ab Block</label>
+    <input id="cfgFromBlock" placeholder="0" value="11661170">
+  </div>
+  <button class="primary" id="btnConnect">Verbinden</button>
+  <button id="btnConnectWallet">Wallet verbinden</button>
+</div>
+
+<div class="toolbar">
+  <button id="btnRefresh" disabled>↻ Alle Module aktualisieren</button>
+  <div class="sep"></div>
+  <span id="lastFetchInfo">Noch keine Daten geladen.</span>
+</div>
+
+<div class="module-toggles" id="moduleToggles"></div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   MINIMAL ABIs — nur die Funktionen/Events, die das Dashboard nutzt.
+   Direkt aus den bereitgestellten Contracts (OracleStorage.sol,
+   P2PEnergyMarket.sol) abgeleitet.
+   ════════════════════════════════════════════════════════════════ */
+const ORACLE_ABI = [
+  "function getCurrentSlot() view returns (uint256)",
+  "function isHouseholdRegistered(address) view returns (bool)",
+  "function startTimestamp() view returns (uint256)",
+  "event HouseholdRegistered(address indexed household)",
+  "event MeterUpdated(address indexed household, uint256 slot, uint256 consumption, uint256 production)"
+];
+
+const MARKET_ABI = [
+  "function getAllHouseholds() view returns (address[])",
+  "function isRegistered(address) view returns (bool)",
+  "function energyPricePerKwh() view returns (uint256)",
+  "function lastSettledSlot() view returns (uint256)",
+  "function owner() view returns (address)",
+  "function settleSlot()",
+  "function setEnergyPrice(uint256)",
+  "function registerHousehold(address)",
+  "function setBatteryManager(address)",
+  "function setIncentiveController(address)",
+  "event HouseholdRegistered(address indexed household)",
+  "event EnergyTraded(address indexed producer, address indexed consumer, uint256 energyWh, uint256 amountPaid, uint256 slot)",
+  "event SlotSettled(uint256 indexed slot, uint256 totalEnergyTraded, uint256 totalPaid)"
+];
+
+// Minimal ERC-20 ABI für den Stablecoin — nur was für die Allowance nötig ist.
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)"
+];
+
+// uint256-Maximum — Konvention für "unbegrenzte" Allowance auf Testnet
+// (siehe README: 2**256 - 1, nur auf Testnet sicher!).
+const BIG_NUMBER = (2n ** 256n) - 1n;
+
+/* ════════════════════════════════════════════════════════════════
+   GLOBAL STATE
+   ════════════════════════════════════════════════════════════════ */
+const state = {
+  provider: null,
+  oracle: null,
+  market: null,
+  signer: null,
+  marketWithSigner: null,
+  walletAddress: null,
+  connected: false,
+  logs: null,       // cached event logs, shared across modules
+  households: [],   // addresses from market.getAllHouseholds()
+  charts: {}        // Chart.js instances, keyed by canvas id, so we can destroy/recreate on refresh
+};
+
+function short(addr){ return addr ? addr.slice(0,6)+"…"+addr.slice(-4) : "–"; }
+function fmtToken(units){ return (Number(units) / 1e6).toLocaleString('de-CH',{maximumFractionDigits:4}); }
+function fmtKwh(wh){ return (Number(wh) / 1000).toLocaleString('de-CH',{maximumFractionDigits:3}); }
+// Kanonisiert eine Adresse (Checksum-Format), damit Vergleiche/Keys nie an Gross-/Kleinschreibung scheitern.
+function norm(addr){ try{ return ethers.getAddress(addr); }catch(e){ return addr; } }
+
+/* ════════════════════════════════════════════════════════════════
+   MODULE REGISTRY
+   Jedes Modul ist unabhängig: eigene render()-Funktion, eigener
+   Fehler-Fang, eigener Toggle. Neues Modul hinzufügen = ein Objekt
+   in diesem Array ergänzen (z.B. später Batterie/Wetter/Access-Control).
+   ════════════════════════════════════════════════════════════════ */
+const MODULES = [
+  { id:'households',   name:'Haushalte',                 cat:'flow',    span:4, enabled:true,  render: renderHouseholds },
+  { id:'timeline',      name:'Verbrauch & Produktion',     cat:'flow',    span:8, enabled:true,  render: renderTimeline },
+  { id:'network',       name:'Trade-Netzwerk pro Slot',    cat:'flow',    span:6, enabled:true,  render: renderNetworkGraph },
+  { id:'ledger',        name:'Selbstversorgung & Saldo',   cat:'finance', span:6, enabled:true,  render: renderLedger },
+  { id:'payments',      name:'Zahlungsübersicht',          cat:'finance', span:12,enabled:true,  render: renderPayments },
+  { id:'oracleHealth',  name:'Oracle-Health',              cat:'ops',     span:4, enabled:true,  render: renderOracleHealth },
+  { id:'reconcile',     name:'Registrierungs-Abgleich',    cat:'ops',     span:4, enabled:true,  render: renderReconcile },
+  { id:'admin',         name:'Admin-Mini-Panel',           cat:'ops',     span:4, enabled:true,  render: renderAdmin },
+];
+
+function buildShell(){
+  const toggles = document.getElementById('moduleToggles');
+  const grid = document.getElementById('grid');
+  toggles.innerHTML = '';
+  grid.innerHTML = '';
+  MODULES.forEach(m=>{
+    const lbl = document.createElement('label');
+    lbl.innerHTML = `<input type="checkbox" data-mod="${m.id}" ${m.enabled?'checked':''}> ${m.name}`;
+    toggles.appendChild(lbl);
+    lbl.querySelector('input').addEventListener('change', e=>{
+      m.enabled = e.target.checked;
+      const panel = document.getElementById('panel-'+m.id);
+      panel.style.display = m.enabled ? '' : 'none';
+      if(m.enabled && state.connected) safeRender(m);
+    });
+
+    const panel = document.createElement('div');
+    panel.className = `panel cat-${m.cat} span-${m.span}`;
+    panel.id = 'panel-'+m.id;
+    panel.innerHTML = `<h3>${m.name}</h3><div class="panel-meta" id="meta-${m.id}"></div><div id="body-${m.id}"><div class="empty">Noch nicht geladen — auf „Verbinden“ klicken.</div></div>`;
+    grid.appendChild(panel);
+  });
+}
+buildShell();
+
+async function safeRender(mod){
+  const body = document.getElementById('body-'+mod.id);
+  try{
+    await mod.render(body, document.getElementById('meta-'+mod.id));
+  }catch(err){
+    console.error(mod.id, err);
+    body.innerHTML = `<div class="err">Fehler in Modul „${mod.name}“: ${ (err && err.shortMessage) || (err && err.message) || err }</div>`;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CONNECTION
+   ════════════════════════════════════════════════════════════════ */
+document.getElementById('btnConnect').addEventListener('click', async ()=>{
+  const rpc = document.getElementById('cfgRpc').value.trim();
+  const oracleAddr = document.getElementById('cfgOracle').value.trim();
+  const marketAddr = document.getElementById('cfgMarket').value.trim();
+  if(!rpc || !oracleAddr || !marketAddr){
+    alert('Bitte RPC URL, OracleStorage- und P2PEnergyMarket-Adresse ausfüllen.');
+    return;
+  }
+  try{
+    state.provider = new ethers.JsonRpcProvider(rpc);
+    await state.provider.getBlockNumber(); // sanity check
+    state.oracle = new ethers.Contract(oracleAddr, ORACLE_ABI, state.provider);
+    state.market = new ethers.Contract(marketAddr, MARKET_ABI, state.provider);
+    state.connected = true;
+    document.getElementById('connDot').className = 'status-dot on';
+    document.getElementById('connText').textContent = 'Verbunden (read-only)';
+    document.getElementById('btnRefresh').disabled = false;
+    await refreshAll();
+  }catch(err){
+    console.error(err);
+    document.getElementById('connDot').className = 'status-dot warn';
+    document.getElementById('connText').textContent = 'Verbindung fehlgeschlagen: ' + (err.message||err);
+  }
+});
+
+document.getElementById('btnConnectWallet').addEventListener('click', async ()=>{
+  if(!window.ethereum){
+    alert('Kein Browser-Wallet (z.B. MetaMask) gefunden.');
+    return;
+  }
+  try{
+    // eth_requestAccounts öffnet den Kontoauswahl-Dialog des im Browser installierten
+    // Wallets (z.B. MetaMask) — welches Wallet das ist, bestimmt der Browser/die
+    // Extension, nicht dieses Dashboard. Falls mehrere Wallet-Extensions installiert
+    // sind, entscheidet der Browser (oder eine Auswahl beim Klick), welche antwortet.
+    const bp = new ethers.BrowserProvider(window.ethereum);
+    await bp.send('eth_requestAccounts', []);
+    state.signer = await bp.getSigner();
+    state.walletAddress = await state.signer.getAddress();
+    const net = await bp.getNetwork();
+    const marketAddr = document.getElementById('cfgMarket').value.trim();
+    if(marketAddr){
+      state.marketWithSigner = new ethers.Contract(marketAddr, MARKET_ABI, state.signer);
+    }
+    const isSepolia = net.chainId === 11155111n;
+    document.getElementById('walletDot').className = 'status-dot ' + (isSepolia ? 'on' : 'warn');
+    document.getElementById('walletText').textContent =
+      `${short(state.walletAddress)} · Chain ${net.chainId}${isSepolia ? '' : ' ⚠️ nicht Sepolia!'}`;
+    const adminMod = MODULES.find(m=>m.id==='admin');
+    if(adminMod.enabled && state.connected) safeRender(adminMod);
+  }catch(err){
+    console.error(err);
+    document.getElementById('walletDot').className = 'status-dot warn';
+    document.getElementById('walletText').textContent = 'Fehler: ' + (err.message||err);
+  }
+});
+
+document.getElementById('btnRefresh').addEventListener('click', refreshAll);
+
+async function refreshAll(){
+  const btn = document.getElementById('btnRefresh');
+  btn.disabled = true; btn.textContent = 'Lädt…';
+  try{
+    await fetchAllLogs();
+    for(const m of MODULES){
+      if(m.enabled) await safeRender(m);
+    }
+    document.getElementById('lastFetchInfo').textContent =
+      `Zuletzt geladen: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} Haushalte · ${state.logs.meter.length} Meter-Events · ${state.logs.trade.length} Trade-Events · ${state.logs.slotSettled.length} abgerechnete Slots`;
+  }finally{
+    btn.disabled = false; btn.textContent = '↻ Alle Module aktualisieren';
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ZENTRALER DATEN-LAYER
+   Lädt einmal alle relevanten Logs & Grunddaten; Module lesen nur
+   aus state.logs / state.households statt eigene RPC-Calls zu machen.
+   ════════════════════════════════════════════════════════════════ */
+// Viele öffentliche RPCs (u.a. der Standard-Sepolia-Endpoint) begrenzen
+// eth_getLogs auf eine maximale Blockspanne pro Call (häufig 50'000).
+// Wir holen die Logs deshalb in Chunks und fügen sie zusammen.
+async function queryFilterChunked(contract, filter, fromBlock, toBlock, chunkSize=45000){
+  let out = [];
+  let start = fromBlock;
+  while(start <= toBlock){
+    const end = Math.min(start + chunkSize - 1, toBlock);
+    const chunk = await contract.queryFilter(filter, start, end);
+    out = out.concat(chunk);
+    start = end + 1;
+  }
+  return out;
+}
+
+async function fetchAllLogs(){
+  const fromBlock = parseInt(document.getElementById('cfgFromBlock').value || '0', 10) || 0;
+  const toBlock = await state.provider.getBlockNumber();
+
+  state.households = await state.market.getAllHouseholds();
+
+  const [meterLogsRaw, tradeLogsRaw, slotSettledRaw, oracleRegRaw] = await Promise.all([
+    queryFilterChunked(state.oracle, state.oracle.filters.MeterUpdated(), fromBlock, toBlock),
+    queryFilterChunked(state.market, state.market.filters.EnergyTraded(), fromBlock, toBlock),
+    queryFilterChunked(state.market, state.market.filters.SlotSettled(), fromBlock, toBlock),
+    queryFilterChunked(state.oracle, state.oracle.filters.HouseholdRegistered(), fromBlock, toBlock),
+  ]);
+
+  state.logs = {
+    meter: meterLogsRaw.map(l=>({
+      household: l.args.household, slot: Number(l.args.slot),
+      consumption: l.args.consumption, production: l.args.production,
+      blockNumber: l.blockNumber
+    })),
+    trade: tradeLogsRaw.map(l=>({
+      producer: l.args.producer, consumer: l.args.consumer,
+      energyWh: l.args.energyWh, amountPaid: l.args.amountPaid,
+      slot: Number(l.args.slot), blockNumber: l.blockNumber
+    })),
+    slotSettled: slotSettledRaw.map(l=>({
+      slot: Number(l.args.slot), totalEnergyTraded: l.args.totalEnergyTraded,
+      totalPaid: l.args.totalPaid, blockNumber: l.blockNumber
+    })),
+    oracleRegistered: [...new Set(oracleRegRaw.map(l=>l.args.household))],
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Haushalte
+   ════════════════════════════════════════════════════════════════ */
+async function renderHouseholds(body, meta){
+  const hs = state.households;
+  meta.textContent = `${hs.length} im P2PEnergyMarket registriert`;
+  if(hs.length===0){ body.innerHTML = '<div class="empty">Keine Haushalte registriert.</div>'; return; }
+  const rows = hs.map(a=>`<tr><td class="addr">${short(a)}</td><td><span class="tag yes">registriert</span></td></tr>`).join('');
+  body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>Markt-Status</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Verbrauch & Produktion (Timeline über Slots)
+   ════════════════════════════════════════════════════════════════ */
+async function renderTimeline(body, meta){
+  const households = state.households;
+  body.innerHTML = `
+    <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center;">
+      <select id="timelineHousehold">
+        <option value="__all__">Alle Haushalte (Summe)</option>
+        ${households.map(a=>`<option value="${a}">${short(a)}</option>`).join('')}
+      </select>
+      <div class="flow-legend">
+        <span><span class="swatch" style="background:var(--consume)"></span>Verbrauch</span>
+        <span><span class="swatch" style="background:var(--produce)"></span>Produktion</span>
+      </div>
+    </div>
+    <canvas id="timelineChart" height="90"></canvas>
+  `;
+  meta.textContent = `${state.logs.meter.length} Meter-Datenpunkte geladen`;
+  document.getElementById('timelineHousehold').addEventListener('change', drawTimeline);
+  drawTimeline();
+
+  function drawTimeline(){
+    const sel = document.getElementById('timelineHousehold').value;
+    const filtered = sel==='__all__' ? state.logs.meter : state.logs.meter.filter(m=>m.household.toLowerCase()===sel.toLowerCase());
+    const bySlot = {};
+    filtered.forEach(m=>{
+      if(!bySlot[m.slot]) bySlot[m.slot] = {c:0n,p:0n};
+      bySlot[m.slot].c += BigInt(m.consumption);
+      bySlot[m.slot].p += BigInt(m.production);
+    });
+    const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
+    const consumption = slots.map(s=>Number(bySlot[s].c)/1000);
+    const production = slots.map(s=>Number(bySlot[s].p)/1000);
+
+    const ctx = document.getElementById('timelineChart');
+    if(slots.length===0){ ctx.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'Keine Meter-Daten im gewählten Blockbereich.'})); return; }
+    try{
+      if(state.charts.timeline) state.charts.timeline.destroy();
+      state.charts.timeline = new Chart(ctx, {
+        type:'line',
+        data:{ labels: slots.map(s=>'Slot '+s), datasets:[
+          { label:'Verbrauch (kWh)', data:consumption, borderColor:'#E2A339', backgroundColor:'rgba(226,163,57,.12)', tension:.25, fill:true, pointRadius:2 },
+          { label:'Produktion (kWh)', data:production, borderColor:'#49C9B0', backgroundColor:'rgba(73,201,176,.12)', tension:.25, fill:true, pointRadius:2 },
+        ]},
+        options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}}}, scales:{
+          x:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
+          y:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
+        }}
+      });
+    }catch(err){
+      console.error('timeline chart', err);
+      ctx.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden — Daten liegen aber vor ('+slots.length+' Slots).'}));
+    }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Trade-Netzwerk-Graph pro Slot
+   ════════════════════════════════════════════════════════════════ */
+async function renderNetworkGraph(body, meta){
+  const slots = [...new Set(state.logs.slotSettled.map(s=>s.slot))].sort((a,b)=>b-a);
+  if(slots.length===0){ body.innerHTML = '<div class="empty">Noch keine abgerechneten Slots (SlotSettled).</div>'; meta.textContent=''; return; }
+  body.innerHTML = `
+    <div style="margin-bottom:10px;"><select id="netSlotSelect">${slots.map(s=>`<option value="${s}">Slot ${s}</option>`).join('')}</select></div>
+    <div id="netSvgHolder"></div>
+  `;
+  meta.textContent = `${slots.length} abgerechnete Slots`;
+  document.getElementById('netSlotSelect').addEventListener('change', draw);
+  draw();
+
+  function draw(){
+    const slot = Number(document.getElementById('netSlotSelect').value);
+    const trades = state.logs.trade.filter(t=>t.slot===slot);
+    const holder = document.getElementById('netSvgHolder');
+    if(trades.length===0){
+      const otherSlots = [...new Set(state.logs.trade.map(t=>t.slot))];
+      holder.innerHTML = `<div class="empty">Keine Trades in Slot ${slot}.<br>
+        Insgesamt geladen: ${state.logs.trade.length} Trade-Event(s)${otherSlots.length ? ', in Slot(s): '+otherSlots.join(', ') : ''}.<br>
+        Falls dieser Slot laut Etherscan Trades enthalten sollte: prüfe, ob die konfigurierte P2PEnergyMarket-Adresse mit der Adresse in der Transaktion übereinstimmt, und ob „Ab Block" niedrig genug gesetzt ist.</div>`;
+      return;
+    }
+
+    const involved = [...new Set(trades.flatMap(t=>[t.producer,t.consumer]))];
+    const n = involved.length;
+    const size = 340, cx = size/2, cy = size/2, r = size*0.36;
+    const pos = {};
+    involved.forEach((addr,i)=>{
+      const ang = (i / n) * Math.PI*2 - Math.PI/2;
+      pos[addr] = { x: cx + r*Math.cos(ang), y: cy + r*Math.sin(ang) };
+    });
+
+    const maxFlow = Math.max(...trades.map(t=>Number(t.energyWh)));
+    let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" style="max-width:380px;display:block;margin:0 auto;">
+      <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#49C9B0"/></marker></defs>`;
+
+    trades.forEach(t=>{
+      const a = pos[t.producer], b = pos[t.consumer];
+      const w = 1 + (Number(t.energyWh)/ (maxFlow||1)) * 4;
+      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+      svg += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#49C9B0" stroke-width="${w}" opacity="0.55" marker-end="url(#arrow)"><title>${short(t.producer)} → ${short(t.consumer)}: ${fmtKwh(t.energyWh)} kWh, ${fmtToken(t.amountPaid)} Token</title></line>`;
+    });
+    involved.forEach(addr=>{
+      const p = pos[addr];
+      svg += `<circle cx="${p.x}" cy="${p.y}" r="16" fill="#1B2329" stroke="#2A343D" stroke-width="1"/>`;
+      svg += `<text x="${p.x}" y="${p.y+3}" text-anchor="middle" font-size="8" fill="#E7EDEF" font-family="IBM Plex Mono, monospace">${addr.slice(2,6)}</text>`;
+    });
+    svg += `</svg>`;
+    holder.innerHTML = svg;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Selbstversorgung & Saldo-Ledger
+   ════════════════════════════════════════════════════════════════ */
+async function renderLedger(body, meta){
+  const stats = {};
+  state.households.forEach(a=> stats[norm(a)] = { produced:0n, consumed:0n, bought:0n, sold:0n, earned:0n, paid:0n });
+
+  let unmatchedMeter = 0, unmatchedTrade = 0;
+  state.logs.meter.forEach(m=>{
+    const k = norm(m.household);
+    if(!stats[k]){ unmatchedMeter++; return; }
+    stats[k].produced += BigInt(m.production);
+    stats[k].consumed += BigInt(m.consumption);
+  });
+  state.logs.trade.forEach(t=>{
+    const p = norm(t.producer), c = norm(t.consumer);
+    let matched = false;
+    if(stats[p]){ stats[p].sold += BigInt(t.energyWh); stats[p].earned += BigInt(t.amountPaid); matched = true; }
+    if(stats[c]){ stats[c].bought += BigInt(t.energyWh); stats[c].paid += BigInt(t.amountPaid); matched = true; }
+    if(!matched) unmatchedTrade++;
+  });
+  if(unmatchedMeter || unmatchedTrade){
+    console.warn(`Ledger: ${unmatchedMeter} Meter-Events und ${unmatchedTrade} Trade-Events passen zu keinem aktuell registrierten Haushalt (evtl. alte Contract-Adresse oder Haushalt seither entfernt).`);
+  }
+
+  const rows = Object.entries(stats).map(([addr,s])=>{
+    const selfSuff = s.consumed>0n ? Math.max(0, 100 - (Number(s.bought)/Number(s.consumed))*100) : 100;
+    const saldo = Number(s.earned - s.paid)/1e6;
+    return `<tr>
+      <td class="addr">${short(addr)}</td>
+      <td>${fmtKwh(s.produced)}</td>
+      <td>${fmtKwh(s.consumed)}</td>
+      <td>${selfSuff.toFixed(0)}%</td>
+      <td style="color:${saldo>=0?'var(--produce)':'var(--warn)'}">${saldo>=0?'+':''}${saldo.toLocaleString('de-CH',{maximumFractionDigits:3})}</td>
+    </tr>`;
+  }).join('');
+
+  meta.textContent = 'Aus Meter- & Trade-Events berechnet'
+    + (unmatchedTrade ? ` · ⚠️ ${unmatchedTrade} Trade-Event(s) ohne passenden Haushalt (Konsole prüfen)` : '');
+  body.innerHTML = state.households.length===0 ? '<div class="empty">Keine Haushalte.</div>' : `
+    <div class="scroll-y"><table><thead><tr>
+      <th>Haushalt</th><th>Produziert (kWh)</th><th>Verbraucht (kWh)</th><th>Selbstvers.</th><th>Saldo (Token)</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Zahlungsübersicht
+   ════════════════════════════════════════════════════════════════ */
+async function renderPayments(body, meta){
+  const trades = [...state.logs.trade].sort((a,b)=> b.blockNumber - a.blockNumber).slice(0,100);
+  const bySlot = {};
+  state.logs.slotSettled.forEach(s=> bySlot[s.slot] = s);
+  const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
+
+  meta.textContent = `${state.logs.trade.length} Trades gesamt (letzte 100 angezeigt)`;
+  body.innerHTML = `
+    <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px;">
+      <div><canvas id="paymentsChart" height="140"></canvas></div>
+      <div class="scroll-y"><table><thead><tr><th>Slot</th><th>Produzent</th><th>Konsument</th><th>kWh</th><th>Token</th></tr></thead>
+        <tbody>${trades.map(t=>`<tr><td>${t.slot}</td><td class="addr">${short(t.producer)}</td><td class="addr">${short(t.consumer)}</td><td>${fmtKwh(t.energyWh)}</td><td>${fmtToken(t.amountPaid)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Keine Trades.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+
+  if(slots.length===0) return;
+  try{
+    if(state.charts.payments) state.charts.payments.destroy();
+    state.charts.payments = new Chart(document.getElementById('paymentsChart'), {
+      type:'bar',
+      data:{ labels: slots.map(s=>'Slot '+s), datasets:[
+        { label:'Token bezahlt', data: slots.map(s=>Number(bySlot[s].totalPaid)/1e6), backgroundColor:'#E2A339' },
+      ]},
+      options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}}}, scales:{
+        x:{ticks:{color:'#5B666D'},grid:{display:false}}, y:{ticks:{color:'#5B666D'},grid:{color:'rgba(255,255,255,.04)'}}
+      }}
+    });
+  }catch(err){
+    console.error('payments chart', err);
+    const holder = document.getElementById('paymentsChart');
+    if(holder) holder.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden — Tabelle rechts bleibt trotzdem gültig.'}));
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Oracle-Health
+   ════════════════════════════════════════════════════════════════ */
+async function renderOracleHealth(body, meta){
+  const currentSlot = Number(await state.oracle.getCurrentSlot());
+  const meterLogs = state.logs.meter;
+  meta.textContent = 'Chain-Zeit vs. letzte Oracle-Schreibung';
+
+  if(meterLogs.length===0){
+    body.innerHTML = `<div class="stat-row"><div class="stat"><div class="v">${currentSlot}</div><div class="l">Aktueller Slot</div></div></div><div class="empty" style="margin-top:8px;">Noch keine MeterUpdated-Events — oracle_writer.py läuft evtl. nicht.</div>`;
+    return;
+  }
+  const last = meterLogs.reduce((a,b)=> a.blockNumber>b.blockNumber ? a : b);
+  const [lastBlock, latestBlock] = await Promise.all([
+    state.provider.getBlock(last.blockNumber),
+    state.provider.getBlock('latest')
+  ]);
+  const secsSince = latestBlock.timestamp - lastBlock.timestamp;
+  const slotGap = currentSlot - last.slot;
+
+  let statusLabel, statusClass;
+  if(slotGap<=2){ statusLabel='OK'; statusClass='ok'; }
+  else if(slotGap<=10){ statusLabel='VERZÖGERT'; statusClass='warn'; }
+  else { statusLabel='HÄNGT'; statusClass='warn'; }
+
+  body.innerHTML = `
+    <div class="stat-row">
+      <div class="stat"><div class="v">${currentSlot}</div><div class="l">Aktueller Slot (Chain-Zeit)</div></div>
+      <div class="stat"><div class="v">${last.slot}</div><div class="l">Letzter geschriebener Slot</div></div>
+      <div class="stat"><div class="v ${statusClass}">${statusLabel}</div><div class="l">Gap: ${slotGap} Slot(s)</div></div>
+      <div class="stat"><div class="v">${secsSince}s</div><div class="l">Seit letztem Update</div></div>
+    </div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Registrierungs-Abgleich
+   ════════════════════════════════════════════════════════════════ */
+async function renderReconcile(body, meta){
+  const oracleSet = new Set(state.logs.oracleRegistered.map(a=>norm(a)));
+  const marketSet = new Set(state.households.map(a=>norm(a)));
+  const all = [...new Set([...oracleSet, ...marketSet])];
+  meta.textContent = `${all.length} Adresse(n) beobachtet`;
+
+  if(all.length===0){ body.innerHTML = '<div class="empty">Keine Registrierungen gefunden.</div>'; return; }
+
+  const rows = all.map(a=>{
+    const inO = oracleSet.has(a), inM = marketSet.has(a);
+    const mismatch = inO !== inM;
+    return `<tr style="${mismatch?'background:rgba(225,87,63,.06)':''}">
+      <td class="addr">${short(a)}</td>
+      <td><span class="tag ${inO?'yes':'no'}">${inO?'ja':'nein'}</span></td>
+      <td><span class="tag ${inM?'yes':'no'}">${inM?'ja':'nein'}</span></td>
+    </tr>`;
+  }).join('');
+  body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>In Oracle</th><th>In Market</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Admin-Mini-Panel
+   ════════════════════════════════════════════════════════════════ */
+async function renderAdmin(body, meta){
+  if(!state.marketWithSigner){
+    meta.textContent = '';
+    body.innerHTML = '<div class="empty">Wallet verbinden, um Admin-Aktionen auszuführen.</div>';
+    return;
+  }
+  const owner = await state.market.owner();
+  const isOwner = owner.toLowerCase() === state.walletAddress.toLowerCase();
+  meta.textContent = `Owner: ${short(owner)} ${isOwner ? '(du)' : '(nicht du)'}`;
+
+  body.innerHTML = `
+    <div class="admin-block">
+      <p>Haushalt im Market registrieren. Nur Owner, und Adresse muss bereits im Oracle registriert sein.</p>
+      <div class="row"><input id="regInput" placeholder="0x... (Haushalt Wallet)"><button id="btnReg">Registrieren</button></div>
+      <div id="regResult"></div>
+    </div>
+    <div class="admin-block">
+      <p>Battery Manager registrieren. Nur Owner.</p>
+      <div class="row"><input id="regBatInput" placeholder="0x... (BatteryManager Contract)"><button id="btnRegBat">Registrieren</button></div>
+      <div id="regBatResult"></div>
+    </div>
+    <div class="admin-block">
+      <p>Incentive Controller registrieren. Nur Owner.</p>
+      <div class="row"><input id="regICInput" placeholder="0x... (IncentiveController Contract)"><button id="btnRegIC">Registrieren</button></div>
+      <div id="regICResult"></div>
+    </div>
+    <div class="admin-block">
+      <p>Token-Allowance an P2PEnergyMarket erteilen (unbegrenzt, 2²⁵⁶-1) — nötig, damit settleSlot() Tokens von <b>deinem</b> Konto abbuchen kann. Wird mit dem verbundenen Wallet signiert; jeder Haushalt muss dies für sein eigenes Konto einmal selbst tun.</p>
+      <div class="row"><input id="stablecoinInput" placeholder="0x... (Stablecoin-Contract-Adresse)" value="0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"><button id="btnToken">Unbegrenzte Allowance erteilen</button></div>
+      <div id="tokenResult"></div>
+    </div>`;
+
+  document.getElementById('btnReg').addEventListener('click', ()=>{
+    const v = document.getElementById('regInput').value.trim();
+    if(!v) return;
+    runTx(state.marketWithSigner.registerHousehold(v), 'regResult');
+  });
+  document.getElementById('btnRegBat').addEventListener('click', ()=>{
+    const v = document.getElementById('regBatInput').value.trim();
+    if(!v) return;
+    runTx(state.marketWithSigner.setBatteryManager(v), 'regBatResult');
+  });
+  document.getElementById('btnRegIC').addEventListener('click', ()=>{
+    const v = document.getElementById('regICInput').value.trim();
+    if(!v) return;
+    runTx(state.marketWithSigner.setIncentiveController(v), 'regICResult');
+  });
+  document.getElementById('btnToken').addEventListener('click', ()=>{
+    const stablecoinAddr = document.getElementById('stablecoinInput').value.trim();
+    if(!stablecoinAddr) return;
+    const marketAddr = document.getElementById('cfgMarket').value.trim();
+    const stablecoin = new ethers.Contract(stablecoinAddr, ERC20_ABI, state.signer);
+    runTx(stablecoin.approve(marketAddr, BIG_NUMBER), 'tokenResult');
+  });
+
+  async function runTx(txPromise, resultId){
+    const el = document.getElementById(resultId);
+    el.innerHTML = '<div class="empty">Transaktion wird gesendet…</div>';
+    try{
+      const tx = await txPromise;
+      el.innerHTML = `<div class="empty">Warte auf Bestätigung… <span class="mono">${short(tx.hash)}</span></div>`;
+      const receipt = await tx.wait();
+      el.innerHTML = `<div class="ok-msg">Erfolgreich · Block ${receipt.blockNumber} · <span class="mono">${short(tx.hash)}</span></div>`;
+      await refreshAll();
+    }catch(err){
+      console.error(err);
+      el.innerHTML = `<div class="err">${err.shortMessage || err.reason || err.message || err}</div>`;
+    }
+  }
+}
+</script>
+</body>
+</html>
