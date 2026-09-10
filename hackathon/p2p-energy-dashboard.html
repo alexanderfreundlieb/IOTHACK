@@ -267,6 +267,7 @@ function renderSidebar(){
       <div class="side-section">
         <div class="side-label">Verbindung</div>
         <button class="primary block" id="btnConnect">Verbinden</button>
+        <div id="connectStatus" style="margin-top:8px;"></div>
         <details class="settings" style="margin-top:10px;">
           <summary>Einstellungen anzeigen</summary>
           <div class="settings-body">
@@ -379,7 +380,11 @@ async function doConnect(){
   const oracleAddr = document.getElementById('cfgOracle').value.trim();
   const marketAddr = document.getElementById('cfgMarket').value.trim();
   const batteryAddr = document.getElementById('cfgBattery').value.trim();
-  if(!rpc || !oracleAddr || !marketAddr){ alert('RPC, OracleStorage- und P2PEnergyMarket-Adresse benötigt.'); return; }
+  const statusEl = document.getElementById('connectStatus');
+  const btn = document.getElementById('btnConnect');
+  if(!rpc || !oracleAddr || !marketAddr){ statusEl.innerHTML = '<div class="err">RPC, OracleStorage- und P2PEnergyMarket-Adresse benötigt.</div>'; return; }
+  btn.disabled = true; btn.textContent = 'Verbinde…';
+  statusEl.innerHTML = '<div class="empty">Stelle Verbindung her…</div>';
   try{
     state.provider = new ethers.JsonRpcProvider(rpc);
     await state.provider.getBlockNumber();
@@ -387,11 +392,13 @@ async function doConnect(){
     state.market = new ethers.Contract(marketAddr, MARKET_ABI, state.provider);
     state.battery = batteryAddr ? new ethers.Contract(batteryAddr, BATTERY_ABI, state.provider) : null;
     state.connected = true;
+    statusEl.innerHTML = '<div class="empty">Lade Daten…</div>';
     await refreshAll();
     renderSidebar();
   }catch(err){
     console.error(err);
-    alert('Verbindung fehlgeschlagen: ' + (err.message||err));
+    btn.disabled = false; btn.textContent = 'Verbinden';
+    statusEl.innerHTML = `<div class="err">Verbindung fehlgeschlagen: ${err.message||err}</div>`;
   }
 }
 
@@ -417,34 +424,44 @@ function wireSignerContracts(){
 }
 
 async function loginWithWallet(){
-  if(!window.ethereum){ alert('Kein Browser-Wallet (z.B. MetaMask) gefunden.'); return; }
+  if(!window.ethereum){ document.getElementById('loginError').innerHTML = '<div class="err">Kein Browser-Wallet (z.B. MetaMask) gefunden.</div>'; return; }
+  const btn = document.getElementById('btnWalletLogin');
+  btn.disabled = true; btn.textContent = 'Verbinde…';
+  document.getElementById('loginError').innerHTML = '<div class="empty">Warte auf Bestätigung im Wallet…</div>';
   try{
     const bp = new ethers.BrowserProvider(window.ethereum);
     await bp.send('eth_requestAccounts', []);
     state.signer = await bp.getSigner();
     state.myAddress = await state.signer.getAddress();
     wireSignerContracts();
+    document.getElementById('loginError').innerHTML = '<div class="empty">Prüfe Rolle…</div>';
     state.role = await detectRole(state.myAddress);
     if(state.role === 'household') state.viewAddress = state.myAddress;
     renderSidebar(); renderMain();
   }catch(err){
     console.error(err);
-    document.getElementById('loginError').innerHTML = `<div class="err">${err.message||err}</div>`;
+    btn.disabled = false; btn.textContent = 'Mit Wallet verbinden';
+    document.getElementById('loginError').innerHTML = `<div class="err">${err.shortMessage || err.message || err}</div>`;
   }
 }
 
 async function loginWithPrivateKey(pk){
-  if(!pk){ return; }
+  const btn = document.getElementById('btnPkLogin');
+  if(!pk){ document.getElementById('loginError').innerHTML = '<div class="err">Bitte Private Key eingeben.</div>'; return; }
+  btn.disabled = true; btn.textContent = 'Verbinde…';
+  document.getElementById('loginError').innerHTML = '<div class="empty">Prüfe Key…</div>';
   try{
     const wallet = new ethers.Wallet(pk, state.provider);
     state.signer = wallet;
     state.myAddress = wallet.address;
     wireSignerContracts();
+    document.getElementById('loginError').innerHTML = '<div class="empty">Prüfe Rolle…</div>';
     state.role = await detectRole(state.myAddress);
     if(state.role === 'household') state.viewAddress = state.myAddress;
     renderSidebar(); renderMain();
   }catch(err){
     console.error(err);
+    btn.disabled = false; btn.textContent = 'Einloggen';
     document.getElementById('loginError').innerHTML = `<div class="err">Ungültiger Private Key: ${err.message||err}</div>`;
   }
 }
@@ -635,11 +652,15 @@ function computeEnergyFlow(scope){
     return { slot:s, block:m.block, production, consumption, ownUse, coveredByBattery, coveredByImport, unmet, toBattery, toExport, curtailed };
   });
 
-  // Zeitraum-Filter (echte Kalendertage, basierend auf Block-Timestamps).
+  // Zeitraum-Filter — in SIMULIERTEN Tagen, nicht realen Kalendertagen: durch die
+  // Zeitkompression (240 reale Sekunden = 1 Sim-Stunde) umfasst der gesamte Datensatz
+  // oft nur wenige reale Stunden, selbst wenn er mehrere simulierte Tage abdeckt.
+  // 1 Sim-Tag = 24 Sim-Stunden * 240 reale Sekunden = 5760 reale Sekunden.
   if(state.timeRangeDays !== 'all' && result.length > 0){
     const timestamps = result.map(f=>blockTime(f.block)).filter(Boolean);
     if(timestamps.length){
-      const cutoff = Math.max(...timestamps) - Number(state.timeRangeDays) * 86400;
+      const SIM_DAY_IN_REAL_SECONDS = 24 * REAL_SECONDS_PER_SIM_HOUR;
+      const cutoff = Math.max(...timestamps) - Number(state.timeRangeDays) * SIM_DAY_IN_REAL_SECONDS;
       result = result.filter(f=>{ const t = blockTime(f.block); return t===null || t >= cutoff; });
     }
   }
@@ -660,7 +681,7 @@ async function renderOverviewPage(el){
     <div class="section-row" style="margin-bottom:0;">
       <div></div>
       <div style="text-align:right;margin-bottom:10px;">
-        <label class="f" style="display:inline;margin-right:6px;">Zeitraum (Charts):</label>
+        <label class="f" style="display:inline;margin-right:6px;">Zeitraum (simulierte Tage):</label>
         <select id="timeRangeSelect">
           <option value="all">Alle Daten</option>
           <option value="1">Letzter Tag</option>
@@ -679,9 +700,9 @@ async function renderOverviewPage(el){
       <h2>${icon('zap')} Energiefluss pro Slot</h2>
       <div class="desc">Woher Verbrauch gedeckt wird (Eigenproduktion / Batterie / Zukauf / ungedeckt) und wohin Produktion geht (Eigenverbrauch / Batterie / Verkauf / ungenutzt). X-Achse: rekonstruierte simulierte Uhrzeit.</div>
       <div class="flow-legend">
-        <span><span class="swatch" style="background:#49C9B0"></span>Eigenverbrauch</span>
+        <span><span class="swatch" style="background:#49C9B0"></span>Eigenverbrauch (hell=Angebot, dunkel=Bedarf)</span>
         <span><span class="swatch" style="background:#8B7FE8"></span>Batterie</span>
-        <span><span class="swatch" style="background:#5B8DEF"></span>P2P Zukauf/Verkauf</span>
+        <span><span class="swatch" style="background:#5B8DEF"></span>Markt (P2P)</span>
         <span><span class="swatch" style="background:#5B666D"></span>Ungenutzt</span>
         <span><span class="swatch" style="background:#E1573F"></span>Ungedeckt</span>
       </div>
@@ -770,14 +791,14 @@ async function renderFlowChart(scope){
   state.charts.flow = new Chart(ctx, {
     type:'bar',
     data:{ labels, datasets:[
-      { label:'Eigenverbrauch (Produktion)', data:flow.map(f=>f.ownUse/1000), backgroundColor:'#49C9B0', stack:'supply' },
-      { label:'Batterie-Ladung', data:flow.map(f=>f.toBattery/1000), backgroundColor:'#8B7FE8', stack:'supply' },
-      { label:'Verkauf (P2P)', data:flow.map(f=>f.toExport/1000), backgroundColor:'#5B8DEF', stack:'supply' },
-      { label:'Ungenutzt', data:flow.map(f=>f.curtailed/1000), backgroundColor:'#5B666D', stack:'supply' },
-      { label:'Eigenversorgt (Verbrauch)', data:flow.map(f=>-f.ownUse/1000), backgroundColor:'#49C9B0', stack:'demand' },
-      { label:'Batterie-Entladung', data:flow.map(f=>-f.coveredByBattery/1000), backgroundColor:'#8B7FE8', stack:'demand' },
-      { label:'Zukauf (P2P)', data:flow.map(f=>-f.coveredByImport/1000), backgroundColor:'#5B8DEF', stack:'demand' },
-      { label:'Ungedeckt', data:flow.map(f=>-f.unmet/1000), backgroundColor:'#E1573F', stack:'demand' },
+      { label:'Direkter Eigenverbrauch', data:flow.map(f=>f.ownUse/1000), backgroundColor:'#49C9B0', stack:'supply' },
+      { label:'Laden in Batterie', data:flow.map(f=>f.toBattery/1000), backgroundColor:'#8B7FE8', stack:'supply' },
+      { label:'Verkauf an Markt', data:flow.map(f=>f.toExport/1000), backgroundColor:'#5B8DEF', stack:'supply' },
+      { label:'Ungenutzter Überschuss', data:flow.map(f=>f.curtailed/1000), backgroundColor:'#5B666D', stack:'supply' },
+      { label:'Aus Eigenproduktion gedeckt', data:flow.map(f=>-f.ownUse/1000), backgroundColor:'#2F8A76', stack:'demand' },
+      { label:'Aus Batterie entnommen', data:flow.map(f=>-f.coveredByBattery/1000), backgroundColor:'#5A4FC0', stack:'demand' },
+      { label:'Zukauf vom Markt', data:flow.map(f=>-f.coveredByImport/1000), backgroundColor:'#3A66C4', stack:'demand' },
+      { label:'Ungedeckter Bedarf', data:flow.map(f=>-f.unmet/1000), backgroundColor:'#E1573F', stack:'demand' },
     ]},
     options:{ responsive:true, plugins:{ legend:{labels:{color:'#8B98A0', boxWidth:11, font:{size:10.5}}},
       tooltip:{ callbacks:{ afterTitle:(items)=>`Slot ${flow[items[0].dataIndex].slot}`,
