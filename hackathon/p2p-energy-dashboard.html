@@ -195,9 +195,11 @@ const INCENTIVE_ABI = [
   "function getPriceMultiplier(address household) view returns (uint256)",
   "function forecasts(address,uint256) view returns (uint256 expectedConsumptionWh, uint256 expectedProductionWh, uint256 slot, uint256 timestamp)",
   "function actuals(address,uint256) view returns (uint256 actualConsumptionWh, uint256 actualProductionWh, uint256 slot)",
+  "function authorizeAI(address ai)",
   "event ForecastSubmitted(address indexed household, uint256 slot, uint256 expectedConsumption)",
   "event ActualSubmitted(address indexed household, uint256 slot, uint256 actualConsumption)",
-  "event ScoreUpdated(address indexed household, uint256 newScore, uint256 deviation)"
+  "event ScoreUpdated(address indexed household, uint256 newScore, uint256 deviation)",
+  "event AIAuthorized(address indexed ai)"
 ];
 // Bekannte Konstanten aus IncentiveController.sol (public constant, ändern sich nicht) —
 // direkt übernommen statt on-chain abgefragt, da als "public constant" ohnehin fix.
@@ -223,7 +225,7 @@ const SIM_START_MINUTES = 6 * 60; // 06:00, fix (siehe oracle_writer.py-Fix)
 const state = {
   provider: null, oracle: null, market: null, battery: null, incentive: null,
   signer: null, myAddress: null, role: 'none', // 'none' | 'owner' | 'household' | 'unknown'
-  marketWithSigner: null, oracleWithSigner: null, batteryWithSigner: null,
+  marketWithSigner: null, oracleWithSigner: null, batteryWithSigner: null, incentiveWithSigner: null,
   connected: false,
   logs: null, households: [], batteryHouseholds: [],
   blockTimestamps: {}, firstBlockTs: null, timeRangeDays: 'all',
@@ -439,6 +441,7 @@ function wireSignerContracts(){
   if(state.market) state.marketWithSigner = new ethers.Contract(state.market.target, MARKET_ABI, state.signer);
   if(state.oracle) state.oracleWithSigner = new ethers.Contract(state.oracle.target, ORACLE_ABI, state.signer);
   if(state.battery) state.batteryWithSigner = new ethers.Contract(state.battery.target, BATTERY_ABI, state.signer);
+  if(state.incentive) state.incentiveWithSigner = new ethers.Contract(state.incentive.target, INCENTIVE_ABI, state.signer);
 }
 
 async function loginWithWallet(){
@@ -1167,6 +1170,12 @@ async function renderAdminPanel(){
       <div id="regICResult"></div>
     </div>
     <div class="admin-block">
+      <p>AI-Wallet beim IncentiveController autorisieren — nötig, damit <code>ai_forecast.py</code> Prognosen (<code>submitForecast</code>/<code>submitActual</code>) schreiben darf.</p>
+      <div class="row"><input id="authAiInput" placeholder="0x... (AI-Wallet)" ${state.incentiveWithSigner?'':'disabled'}><button id="btnAuthAi" ${state.incentiveWithSigner?'':'disabled'}>Autorisieren</button></div>
+      ${state.incentiveWithSigner ? '' : '<p style="margin-top:6px;">⚠️ IncentiveController-Adresse oben im Config-Bereich eintragen und Wallet neu verbinden.</p>'}
+      <div id="authAiResult"></div>
+    </div>
+    <div class="admin-block">
       <p>Aktuellen Slot abrechnen (kein Owner nötig).</p>
       <div class="row"><button id="btnSettle">Slot abrechnen</button></div>
       <div id="settleResult"></div>
@@ -1182,6 +1191,7 @@ async function renderAdminPanel(){
   document.getElementById('btnRegBmHh').addEventListener('click', ()=>{ const v=document.getElementById('regBmHhInput').value.trim(); if(v && state.batteryWithSigner) runTx(state.batteryWithSigner.addHousehold(v), 'regBmHhResult'); });
   document.getElementById('btnRegBat').addEventListener('click', ()=>{ const v=document.getElementById('regBatInput').value.trim(); if(v) runTx(state.marketWithSigner.setBatteryManager(v), 'regBatResult'); });
   document.getElementById('btnRegIC').addEventListener('click', ()=>{ const v=document.getElementById('regICInput').value.trim(); if(v) runTx(state.marketWithSigner.setIncentiveController(v), 'regICResult'); });
+  document.getElementById('btnAuthAi').addEventListener('click', ()=>{ const v=document.getElementById('authAiInput').value.trim(); if(v && state.incentiveWithSigner) runTx(state.incentiveWithSigner.authorizeAI(v), 'authAiResult'); });
   document.getElementById('btnSettle').addEventListener('click', ()=> runTx(state.marketWithSigner.settleSlot(), 'settleResult'));
   document.getElementById('btnPrice').addEventListener('click', ()=>{ const v=document.getElementById('priceInput').value.trim(); if(v) runTx(state.marketWithSigner.setEnergyPrice(BigInt(v)), 'priceResult'); });
 }
