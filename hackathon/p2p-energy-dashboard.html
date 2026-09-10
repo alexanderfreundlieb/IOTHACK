@@ -3,123 +3,121 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>P2P Energy Market – Control Panel</title>
+<title>P2P Energy Market</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
-    --bg:#0F1417;
-    --panel:#161D22;
-    --panel-alt:#1B2329;
-    --border:#2A343D;
-    --text:#E7EDEF;
-    --text-dim:#8B98A0;
-    --text-faint:#5B666D;
-    --produce:#49C9B0;
-    --consume:#E2A339;
-    --ops:#5B8DEF;
-    --warn:#E1573F;
-    --ok:#49C97A;
-    --font-ui:'IBM Plex Sans',system-ui,sans-serif;
-    --font-mono:'IBM Plex Mono',ui-monospace,monospace;
+    --bg:#0F1417; --panel:#161D22; --panel-alt:#1B2329; --border:#2A343D;
+    --text:#E7EDEF; --text-dim:#8B98A0; --text-faint:#5B666D;
+    --produce:#49C9B0; --consume:#E2A339; --ops:#5B8DEF; --warn:#E1573F; --ok:#49C97A;
+    --battery:#8B7FE8;
+    --font-ui:'IBM Plex Sans',system-ui,sans-serif; --font-mono:'IBM Plex Mono',ui-monospace,monospace;
   }
   *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--font-ui);}
-  body{padding:20px 24px 60px;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--font-ui);height:100%;}
+  body{display:flex;height:100vh;overflow:hidden;}
   h1,h2,h3{font-weight:600;margin:0;}
   .mono{font-family:var(--font-mono);}
   a{color:var(--ops);}
-
-  /* ── Header ───────────────────────────────────────────── */
-  header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:16px;}
-  header h1{font-size:19px;letter-spacing:.2px;}
-  header .sub{color:var(--text-dim);font-size:13px;margin-top:3px;}
-  .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--text-faint);}
-  .status-dot.on{background:var(--ok);}
-  .status-dot.warn{background:var(--warn);}
-
-  /* ── Config bar ───────────────────────────────────────── */
-  .config{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr .6fr auto auto;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px;margin-bottom:14px;align-items:end;}
-  .config label{display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;}
-  .config input{width:100%;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:7px 8px;border-radius:3px;font-family:var(--font-mono);font-size:12.5px;}
-  .config input:focus{outline:1px solid var(--ops);}
-  button{cursor:pointer;font-family:var(--font-ui);font-size:12.5px;font-weight:500;border-radius:3px;border:1px solid var(--border);background:var(--panel-alt);color:var(--text);padding:8px 12px;transition:background .12s;}
+  button{cursor:pointer;font-family:var(--font-ui);font-size:12.5px;font-weight:500;border-radius:5px;border:1px solid var(--border);background:var(--panel-alt);color:var(--text);padding:8px 12px;transition:background .12s;}
   button:hover{background:#232D34;}
   button:disabled{opacity:.4;cursor:not-allowed;}
   button.primary{background:var(--ops);border-color:var(--ops);color:#0B1116;font-weight:600;}
   button.primary:hover{background:#6d9bf5;}
-  button.danger{border-color:var(--warn);color:var(--warn);}
-  button:focus-visible{outline:2px solid var(--ops);outline-offset:1px;}
+  button.block{width:100%;}
+  input,select{background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:7px 8px;border-radius:5px;font-family:var(--font-mono);font-size:12.5px;}
+  input.full,select.full{width:100%;}
+  label.f{display:block;font-size:11px;color:var(--text-dim);margin:8px 0 4px;}
 
-  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px;color:var(--text-dim);font-size:12.5px;}
-  .toolbar .sep{width:1px;height:18px;background:var(--border);}
-  .toolbar input[type=number]{width:90px;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:6px 7px;border-radius:3px;font-family:var(--font-mono);font-size:12px;}
+  /* ── Layout ───────────────────────────────────────────── */
+  .sidebar{width:260px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;height:100vh;overflow-y:auto;padding:16px 14px;}
+  .main{flex:1;overflow-y:auto;padding:26px 30px 60px;}
+  .brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;margin-bottom:18px;padding:0 2px;}
+  .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--produce);}
 
-  /* ── Module toggles ──────────────────────────────────── */
-  .module-toggles{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:20px;padding:10px 12px;background:var(--panel);border:1px solid var(--border);border-radius:4px;}
-  .module-toggles label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);cursor:pointer;user-select:none;}
-  .module-toggles input{accent-color:var(--ops);}
-  .module-toggles label.dis{color:var(--text-faint);text-decoration:line-through;}
+  .side-section{border-top:1px solid var(--border);padding-top:12px;margin-top:12px;}
+  .side-section:first-of-type{border-top:none;margin-top:0;padding-top:0;}
+  .side-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-faint);margin-bottom:8px;}
 
-  /* ── Grid & panels ───────────────────────────────────── */
-  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;}
-  .panel{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--border);border-radius:4px;padding:16px;min-width:0;}
-  .panel.cat-flow{border-left-color:var(--produce);}
-  .panel.cat-finance{border-left-color:var(--consume);}
-  .panel.cat-ops{border-left-color:var(--ops);}
-  .panel h3{font-size:13px;text-transform:none;color:var(--text);}
-  .panel .panel-meta{font-size:11px;color:var(--text-faint);margin-top:2px;margin-bottom:12px;}
-  .span-4{grid-column:span 4;}
-  .span-5{grid-column:span 5;}
-  .span-6{grid-column:span 6;}
-  .span-7{grid-column:span 7;}
-  .span-8{grid-column:span 8;}
-  .span-12{grid-column:span 12;}
-  @media (max-width:980px){ .grid > .panel{grid-column:span 12 !important;} .config{grid-template-columns:1fr 1fr;} }
+  .profile-card{background:var(--panel-alt);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:4px;}
+  .role-badge{display:inline-block;font-size:10px;padding:2px 7px;border-radius:3px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;margin-bottom:6px;}
+  .role-badge.owner{background:rgba(91,141,239,.18);color:var(--ops);}
+  .role-badge.household{background:rgba(73,201,176,.18);color:var(--produce);}
+  .profile-addr{font-size:11.5px;word-break:break-all;}
+
+  .nav-item{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:6px;cursor:pointer;
+    color:var(--text-dim);font-size:13px;margin-bottom:2px;user-select:none;}
+  .nav-item:hover{background:var(--panel-alt);}
+  .nav-item.active{background:var(--panel-alt);color:var(--text);box-shadow:inset 3px 0 0 var(--ops);}
+
+  .hh-list{max-height:220px;overflow-y:auto;}
+  .hh-item{padding:7px 10px;border-radius:5px;cursor:pointer;font-size:12px;font-family:var(--font-mono);
+    color:var(--text-dim);margin-bottom:2px;}
+  .hh-item:hover{background:var(--panel-alt);}
+  .hh-item.active{background:var(--panel-alt);color:var(--text);box-shadow:inset 3px 0 0 var(--produce);}
+
+  details.settings summary{cursor:pointer;font-size:11px;color:var(--text-faint);list-style:none;padding:4px 0;}
+  details.settings summary::-webkit-details-marker{display:none;}
+  details.settings[open] summary{color:var(--text-dim);}
+  .settings-body{padding-top:8px;}
+  .settings-body label.f{margin:6px 0 3px;}
+
+  .status-line{font-size:10.5px;color:var(--text-faint);margin-top:10px;line-height:1.5;}
+  .status-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;background:var(--text-faint);}
+  .status-dot.on{background:var(--ok);}
+  .status-dot.warn{background:var(--warn);}
+
+  /* ── Main content ─────────────────────────────────────── */
+  .page-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:20px;flex-wrap:wrap;gap:8px;}
+  .page-header h1{font-size:19px;}
+  .page-header .sub{font-size:12px;color:var(--text-dim);}
+
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px;}
+  .kpi-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}
+  .kpi-card .v{font-family:var(--font-mono);font-size:23px;font-weight:600;}
+  .kpi-card .v.warn{color:var(--warn);} .kpi-card .v.ok{color:var(--ok);}
+  .kpi-card .l{font-size:11px;color:var(--text-dim);margin-top:4px;}
+
+  .section{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px;margin-bottom:18px;}
+  .section h2{font-size:13.5px;display:flex;align-items:center;gap:7px;}
+  .section .desc{font-size:11.5px;color:var(--text-dim);margin:3px 0 14px;}
+  .section-row{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  @media (max-width:900px){ .section-row{grid-template-columns:1fr;} .sidebar{width:210px;} }
 
   .empty{color:var(--text-faint);font-size:12.5px;padding:10px 0;}
-  .err{color:var(--warn);font-size:12px;background:rgba(225,87,63,.08);border:1px solid rgba(225,87,63,.3);padding:8px 10px;border-radius:3px;margin-top:6px;}
-  .ok-msg{color:var(--ok);font-size:12px;background:rgba(73,201,122,.08);border:1px solid rgba(73,201,122,.3);padding:8px 10px;border-radius:3px;margin-top:6px;}
+  .err{color:var(--warn);font-size:12px;background:rgba(225,87,63,.08);border:1px solid rgba(225,87,63,.3);padding:8px 10px;border-radius:5px;margin-top:6px;}
+  .ok-msg{color:var(--ok);font-size:12px;background:rgba(73,201,122,.08);border:1px solid rgba(73,201,122,.3);padding:8px 10px;border-radius:5px;margin-top:6px;}
+  .warn-msg{color:var(--warn);font-size:11.5px;background:rgba(225,87,63,.06);border:1px solid rgba(225,87,63,.25);padding:8px 10px;border-radius:5px;margin:8px 0;}
 
   table{width:100%;border-collapse:collapse;font-size:12.5px;}
   th{text-align:left;color:var(--text-faint);font-weight:500;font-size:11px;padding:0 8px 6px 0;border-bottom:1px solid var(--border);}
   td{padding:6px 8px 6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--font-mono);}
   tr:last-child td{border-bottom:none;}
-  .addr{color:var(--text);}
-  .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:2px;font-family:var(--font-ui);}
+  .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:3px;font-family:var(--font-ui);}
   .tag.yes{background:rgba(73,201,176,.15);color:var(--produce);}
   .tag.no{background:rgba(225,87,63,.15);color:var(--warn);}
-
-  .stat-row{display:flex;gap:22px;flex-wrap:wrap;}
-  .stat{min-width:110px;}
-  .stat .v{font-family:var(--font-mono);font-size:20px;font-weight:600;}
-  .stat .l{font-size:11px;color:var(--text-dim);margin-top:2px;}
-  .stat .v.warn{color:var(--warn);}
-  .stat .v.ok{color:var(--ok);}
-
-  select{background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:3px;font-family:var(--font-ui);font-size:12.5px;}
-
-  .flow-legend{display:flex;gap:16px;font-size:11.5px;color:var(--text-dim);margin-bottom:10px;}
-  .flow-legend span{display:inline-flex;align-items:center;gap:5px;}
-  .swatch{width:10px;height:10px;border-radius:2px;display:inline-block;}
+  .addr-link{color:var(--text);text-decoration:none;border-bottom:1px dotted var(--text-faint);}
+  .addr-link:hover{color:var(--ops);border-bottom-color:var(--ops);}
+  .scroll-y{max-height:320px;overflow-y:auto;}
+  canvas{max-width:100%;}
 
   .admin-block{border-top:1px solid var(--border);padding-top:12px;margin-top:12px;}
   .admin-block:first-child{border-top:none;padding-top:0;margin-top:0;}
   .admin-block .row{display:flex;gap:8px;margin-top:8px;}
-  .admin-block input{flex:1;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:7px 8px;border-radius:3px;font-family:var(--font-mono);font-size:12px;}
+  .admin-block input{flex:1;}
   .admin-block p{font-size:11.5px;color:var(--text-dim);margin:0;}
 
-  canvas{max-width:100%;}
-  .scroll-y{max-height:320px;overflow-y:auto;}
-
-  .addr-link{color:var(--text);text-decoration:none;border-bottom:1px dotted var(--text-faint);}
-  .addr-link:hover{color:var(--ops);border-bottom-color:var(--ops);}
+  .login-box .row{display:flex;gap:6px;margin-top:6px;}
+  .login-box input{flex:1;}
+  .pk-toggle{font-size:11px;color:var(--text-faint);cursor:pointer;text-decoration:underline;margin-top:8px;display:inline-block;}
 
   /* ── Batterie-Visual ─────────────────────────────────── */
   .battery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;}
-  .battery-card{background:var(--panel-alt);border:1px solid var(--border);border-radius:4px;padding:10px;text-align:center;}
+  .battery-card{background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center;}
   .battery-card .addr-link{font-size:11px;display:block;margin-bottom:8px;}
   .battery-shell{position:relative;width:56px;height:104px;margin:0 auto 8px;border:2px solid var(--text-dim);border-radius:5px;overflow:hidden;background:#0B1116;}
   .battery-shell::before{content:'';position:absolute;top:-6px;left:50%;transform:translateX(-50%);width:20px;height:6px;background:var(--text-dim);border-radius:2px 2px 0 0;}
@@ -130,79 +128,33 @@
   .battery-fill.charging{animation:pulseFill 1.4s ease-in-out infinite;}
   @keyframes pulseFill{ 0%,100%{filter:brightness(1);} 50%{filter:brightness(1.35);} }
   .battery-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:13px;font-weight:600;color:#0B1116;mix-blend-mode:screen;text-shadow:0 0 3px rgba(0,0,0,.4);}
-  .battery-bolt{position:absolute;top:6px;left:50%;transform:translateX(-50%);width:14px;height:14px;opacity:0;}
-  .battery-bolt.show-charge{opacity:1;animation:boltFlicker 1.1s ease-in-out infinite;}
-  .battery-bolt.show-discharge{opacity:1;animation:boltFlicker 1.1s ease-in-out infinite;}
+  .battery-bolt{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-size:13px;line-height:14px;opacity:0;}
+  .battery-bolt.show-charge, .battery-bolt.show-discharge{opacity:1;animation:boltFlicker 1.1s ease-in-out infinite;}
   @keyframes boltFlicker{ 0%,100%{opacity:.35;} 50%{opacity:1;} }
   .battery-status-label{font-size:10.5px;color:var(--text-dim);}
-  .battery-status-label.charge{color:var(--produce);}
-  .battery-status-label.discharge{color:var(--consume);}
+  .battery-status-label.charge{color:var(--produce);} .battery-status-label.discharge{color:var(--consume);}
   .battery-meta-row{display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:4px;font-family:var(--font-mono);}
+
+  .flow-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text-dim);margin-bottom:10px;}
+  .flow-legend span{display:inline-flex;align-items:center;gap:5px;}
+  .swatch{width:10px;height:10px;border-radius:2px;display:inline-block;}
 </style>
 </head>
 <body>
 
-<header>
-  <div>
-    <h1>P2P Energy Market — Control Panel</h1>
-    <div class="sub"><span id="connDot" class="status-dot"></span><span id="connText">Nicht verbunden</span></div>
-  </div>
-  <div class="sub" style="text-align:right">
-    <div><span id="walletDot" class="status-dot"></span><span id="walletText">Kein Wallet verbunden</span></div>
-  </div>
-</header>
-
-<div class="config">
-  <div>
-    <label>RPC URL</label>
-    <input id="cfgRpc" placeholder="https://sepolia.infura.io/v3/..." value="https://ethereum-sepolia-rpc.publicnode.com">
-  </div>
-  <div>
-    <label>OracleStorage Adresse</label>
-    <input id="cfgOracle" placeholder="0x...">
-  </div>
-  <div>
-    <label>P2PEnergyMarket Adresse</label>
-    <input id="cfgMarket" placeholder="0x...">
-  </div>
-  <div>
-    <label>BatteryManager Adresse (optional)</label>
-    <input id="cfgBattery" placeholder="0x...">
-  </div>
-  <div>
-    <label>Ab Block</label>
-    <input id="cfgFromBlock" placeholder="0" value="11661170">
-  </div>
-  <button class="primary" id="btnConnect">Verbinden</button>
-  <button id="btnConnectWallet">Wallet verbinden</button>
-</div>
-
-<div class="toolbar">
-  <button id="btnRefresh" disabled>↻ Alle Module aktualisieren</button>
-  <div class="sep"></div>
-  <label style="display:flex;align-items:center;gap:6px;">Slots in Zahlungsübersicht: <input type="number" id="cfgSlotWindow" value="15" min="1" max="500"></label>
-  <div class="sep"></div>
-  <label style="display:flex;align-items:center;gap:6px;" title="Simulierte Uhrzeit beim ersten geladenen Slot (Ankerpunkt), nicht bei Slot 0">Sim-Zeit @ 1. Slot: <input type="time" id="cfgSimStart" value="06:00"></label>
-  <label style="display:flex;align-items:center;gap:6px;">Sim-Min/Slot: <input type="number" id="cfgSimMinPerSlot" value="15" min="1" max="1440" style="width:60px;"></label>
-  <div class="sep"></div>
-  <span id="lastFetchInfo">Noch keine Daten geladen.</span>
-</div>
-
-<div class="module-toggles" id="moduleToggles"></div>
-
-<div class="grid" id="grid"></div>
+<div class="sidebar" id="sidebar"></div>
+<div class="main" id="main"></div>
 
 <script>
 /* ════════════════════════════════════════════════════════════════
-   MINIMAL ABIs — nur die Funktionen/Events, die das Dashboard nutzt.
-   Direkt aus den bereitgestellten Contracts (OracleStorage.sol,
-   P2PEnergyMarket.sol) abgeleitet.
+   ABIs
    ════════════════════════════════════════════════════════════════ */
 const ORACLE_ABI = [
-  "function authorizeOracle(address)",
   "function getCurrentSlot() view returns (uint256)",
   "function isHouseholdRegistered(address) view returns (bool)",
   "function startTimestamp() view returns (uint256)",
+  "function owner() view returns (address)",
+  "function authorizeOracle(address oracle)",
   "event HouseholdRegistered(address indexed household)",
   "event MeterUpdated(address indexed household, uint256 slot, uint256 consumption, uint256 production)",
   "event BatteryUpdated(address indexed household, uint256 slot, uint256 soc)"
@@ -224,13 +176,6 @@ const MARKET_ABI = [
   "event SlotSettled(uint256 indexed slot, uint256 totalEnergyTraded, uint256 totalPaid)"
 ];
 
-// BatteryManager (Phase 2) — nur Funktionen, die per Testdatei bzw. der
-// P2PEnergyMarket-Integration bestätigt sind (isManaged() wird dort direkt
-// aufgerufen; addHousehold()/getBatteryStatus()/getManagedHouseholds()/
-// totalChargedWh()/totalDischargedWh() aus BatteryManagerTest.t.sol).
-// decideAction()/getLastDecision()/previewAction() bewusst NICHT eingebunden,
-// solange Action-Enum-Reihenfolge & Decision-Struct nicht aus dem echten
-// Contract/Interface bestätigt sind.
 const BATTERY_ABI = [
   "function addHousehold(address)",
   "function isManaged(address) view returns (bool)",
@@ -240,42 +185,36 @@ const BATTERY_ABI = [
   "function totalDischargedWh(address) view returns (uint256)",
   "function MAX_SOC() view returns (uint256)",
   "function RESERVE_SOC_CLOUDY() view returns (uint256)",
-  // previewAction() ist view (gratis, keine Tx) und liefert einen Klartext-Grund
-  // ("store PV surplus", "battery covers deficit", ...) direkt aus _evaluate().
-  // Der Grund macht das Action-Enum fürs Dashboard überflüssig: Charge/Discharge
-  // wird stattdessen aus dem Vorzeichen von netto (Produktion-Verbrauch) UND
-  // amountWh>0 abgeleitet — beides bereits vorhandene, sicher interpretierbare Werte.
-  "function previewAction(address) view returns (uint8 action, uint256 amountWh, string reason)"
+  "function previewAction(address) view returns (uint8 action, uint256 amountWh, string reason)",
+  "event DecisionMade(address indexed household, uint8 action, uint256 amountWh, uint256 slot, string reason)"
 ];
 
-// Minimal ERC-20 ABI für den Stablecoin — nur was für die Allowance nötig ist.
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
   "function allowance(address owner, address spender) view returns (uint256)"
 ];
 
-// uint256-Maximum — Konvention für "unbegrenzte" Allowance auf Testnet
-// (siehe README: 2**256 - 1, nur auf Testnet sicher!).
 const BIG_NUMBER = (2n ** 256n) - 1n;
 
+// 1 Slot = 1 reale Minute = 15 Sim-Minuten -> 3600/15 = 240 reale Sekunden pro Sim-Stunde.
+// Simulierte Zeit wird aus ECHTEN Block-Timestamps rekonstruiert (nicht aus Slot-Zählung
+// oder einer angenommenen fixen Rate pro Event), verankert bei 06:00 am ersten geladenen
+// Datenpunkt -- das bildet reale Verzögerungen zwischen push_slot()-Durchläufen korrekt ab.
+const REAL_SECONDS_PER_SIM_HOUR = 240;
+const SIM_START_MINUTES = 6 * 60; // 06:00, fix (siehe oracle_writer.py-Fix)
+
 /* ════════════════════════════════════════════════════════════════
-   GLOBAL STATE
+   STATE
    ════════════════════════════════════════════════════════════════ */
 const state = {
-  provider: null,
-  oracle: null,
-  market: null,
-  battery: null,          // BatteryManager read contract, null falls nicht konfiguriert
-  signer: null,
-  marketWithSigner: null,
-  batteryWithSigner: null,
-  walletAddress: null,
+  provider: null, oracle: null, market: null, battery: null,
+  signer: null, myAddress: null, role: 'none', // 'none' | 'owner' | 'household' | 'unknown'
+  marketWithSigner: null, oracleWithSigner: null, batteryWithSigner: null,
   connected: false,
-  logs: null,       // cached event logs, shared across modules
-  households: [],   // addresses from market.getAllHouseholds()
-  batteryHouseholds: [], // addresses from battery.getManagedHouseholds()
-  blockTimestamps: {}, // blockNumber -> unix seconds, on-demand befüllt
-  charts: {}        // Chart.js instances, keyed by canvas id, so we can destroy/recreate on refresh
+  logs: null, households: [], batteryHouseholds: [],
+  blockTimestamps: {}, firstBlockTs: null, timeRangeDays: 'all',
+  page: 'overview', viewAddress: 'all',
+  charts: {}
 };
 
 function short(addr){ return addr ? addr.slice(0,6)+"…"+addr.slice(-4) : "–"; }
@@ -283,188 +222,243 @@ function addrLink(addr){ return addr ? `<a class="addr-link" href="https://sepol
 function fmtToken(units){ return (Number(units) / 1e6).toLocaleString('de-CH',{maximumFractionDigits:4}); }
 function fmtKwh(wh){ return (Number(wh) / 1000).toLocaleString('de-CH',{maximumFractionDigits:3}); }
 function fmtTime(ts){ return ts ? new Date(Number(ts)*1000).toLocaleString('de-CH',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : ''; }
-// Näherung der SIMULIERTEN Uhrzeit aus der Slot-Nummer — die echte sim_hour aus
-// data_simulator.py wird nirgends on-chain geschrieben, daher approximieren wir
-// mit der bekannten fixen Rate (Standard: 15 Sim-Minuten/Slot, einstellbar oben)
-// ab einer konfigurierbaren Start-Uhrzeit. Nur so genau wie diese Annahme stimmt.
-// Fixe 15-Minuten-Schritte pro geladenem Datenpunkt (Index, nicht Slot-Nummer
-// oder Echtzeit-Differenz) — sim_hour wird zwar kontinuierlich aus realer Zeit
-// berechnet, aber jeder push_slot()-Durchlauf soll strukturell 15 Sim-Minuten
-// entsprechen; echte Verzögerungen zwischen Durchläufen (60-120s statt 60s)
-// würden die Achse sonst verzerren.
-function simTimeLabel(index){
-  const startStr = document.getElementById('cfgSimStart').value || '06:00';
-  const minPerSlot = parseFloat(document.getElementById('cfgSimMinPerSlot').value) || 15;
-  const [sh, sm] = startStr.split(':').map(Number);
-  const raw = (sh*60 + sm) + index*minPerSlot;
-  const totalMin = ((raw % 1440) + 1440) % 1440;
-  const h = Math.floor(totalMin/60), m = Math.round(totalMin%60);
-  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
-}
-// Kanonisiert eine Adresse (Checksum-Format), damit Vergleiche/Keys nie an Gross-/Kleinschreibung scheitern.
 function norm(addr){ try{ return ethers.getAddress(addr); }catch(e){ return addr; } }
 
+// Kleine, lizenzfreie Strich-Icons (kein Emoji, keine externe Icon-Bibliothek nötig).
+const ICON_PATHS = {
+  grid: '<rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+  sliders: '<line x1="2" y1="4" x2="14" y2="4"/><circle cx="6" cy="4" r="1.6"/><line x1="2" y1="8" x2="14" y2="8"/><circle cx="10" cy="8" r="1.6"/><line x1="2" y1="12" x2="14" y2="12"/><circle cx="5" cy="12" r="1.6"/>',
+  zap: '<polygon points="8,1 3,9 7,9 6,15 13,6 9,6"/>',
+  battery: '<rect x="1" y="4" width="11" height="8" rx="1.5"/><rect x="13" y="6.5" width="2" height="3" rx="0.5"/>',
+  chart: '<polyline points="1,13 5,8 8,10 15,2"/><line x1="1" y1="15" x2="15" y2="15"/>',
+  card: '<rect x="1" y="3" width="14" height="10" rx="1.5"/><line x1="1" y1="6.5" x2="15" y2="6.5"/>',
+  unlock: '<rect x="3" y="7" width="10" height="7" rx="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0"/>',
+  pulse: '<polyline points="1,8 4,8 6,3 9,13 11,8 15,8"/>',
+  link: '<path d="M6.5 9.5 9.5 6.5"/><path d="M7 4l1.5-1.5a2.6 2.6 0 0 1 3.7 3.7L11 7.5"/><path d="M9 12l-1.5 1.5a2.6 2.6 0 0 1-3.7-3.7L5 8.5"/>',
+  home: '<path d="M2 7.5 8 2l6 5.5"/><path d="M3.5 6.5V14h9V6.5"/>',
+  tool: '<path d="M10.5 5.5 12 4a3 3 0 0 0-4-4l-1.3 1.3M5.5 10.5 4 12a3 3 0 0 0 4 4l1.3-1.3"/><line x1="2" y1="14" x2="10" y2="6"/>',
+  info: '<circle cx="8" cy="8" r="6.5"/><line x1="8" y1="7" x2="8" y2="11.5"/><circle cx="8" cy="4.7" r="0.15" fill="currentColor" stroke-width="1.4"/>',
+  down: '<line x1="8" y1="2" x2="8" y2="12"/><polyline points="4,8 8,13 12,8"/>',
+};
+function icon(name, size){
+  size = size || 14;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;">${ICON_PATHS[name]||''}</svg>`;
+}
+
+function simTimeLabel(blockTs){
+  if(!blockTs || !state.firstBlockTs) return '–:–';
+  const elapsedReal = blockTs - state.firstBlockTs;
+  const elapsedSimMin = (elapsedReal / REAL_SECONDS_PER_SIM_HOUR) * 60;
+  const raw = SIM_START_MINUTES + elapsedSimMin;
+  const totalMin = ((Math.round(raw) % 1440) + 1440) % 1440;
+  const h = Math.floor(totalMin/60), m = totalMin%60;
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+}
+
 /* ════════════════════════════════════════════════════════════════
-   MODULE REGISTRY
-   Jedes Modul ist unabhängig: eigene render()-Funktion, eigener
-   Fehler-Fang, eigener Toggle. Neues Modul hinzufügen = ein Objekt
-   in diesem Array ergänzen (z.B. später Batterie/Wetter/Access-Control).
+   SIDEBAR
    ════════════════════════════════════════════════════════════════ */
-const MODULES = [
-  { id:'households',   name:'Haushalte',                 cat:'flow',    span:4, enabled:true,  render: renderHouseholds },
-  { id:'timeline',      name:'Verbrauch & Produktion',     cat:'flow',    span:8, enabled:true,  render: renderTimeline },
-  { id:'battery',       name:'Batterie-Status',            cat:'flow',    span:7, enabled:true,  render: renderBatteryStatus },
-  { id:'batteryHistory',name:'Batterie-Verlauf (SoC)',      cat:'flow',    span:5, enabled:true,  render: renderBatteryHistory },
-  { id:'network',       name:'Trade-Netzwerk pro Slot',    cat:'flow',    span:6, enabled:true,  render: renderNetworkGraph },
-  { id:'ledger',        name:'Selbstversorgung & Saldo',   cat:'finance', span:6, enabled:true,  render: renderLedger },
-  { id:'payments',      name:'Zahlungsübersicht',          cat:'finance', span:12,enabled:true,  render: renderPayments },
-  { id:'oracleHealth',  name:'Oracle-Health',              cat:'ops',     span:4, enabled:true,  render: renderOracleHealth },
-  { id:'reconcile',     name:'Registrierungs-Abgleich',    cat:'ops',     span:4, enabled:true,  render: renderReconcile },
-  { id:'admin',         name:'Admin-Mini-Panel',           cat:'ops',     span:4, enabled:true,  render: renderAdmin },
-];
+function renderSidebar(){
+  const el = document.getElementById('sidebar');
+  let html = `<div class="brand"><span class="dot"></span> P2P Energy</div>`;
 
-function buildShell(){
-  const toggles = document.getElementById('moduleToggles');
-  const grid = document.getElementById('grid');
-  toggles.innerHTML = '';
-  grid.innerHTML = '';
-  MODULES.forEach(m=>{
-    const lbl = document.createElement('label');
-    lbl.innerHTML = `<input type="checkbox" data-mod="${m.id}" ${m.enabled?'checked':''}> ${m.name}`;
-    toggles.appendChild(lbl);
-    lbl.querySelector('input').addEventListener('change', e=>{
-      m.enabled = e.target.checked;
-      const panel = document.getElementById('panel-'+m.id);
-      panel.style.display = m.enabled ? '' : 'none';
-      if(m.enabled && state.connected) safeRender(m);
-    });
+  if(!state.connected){
+    html += `
+      <div class="side-section">
+        <div class="side-label">Verbindung</div>
+        <button class="primary block" id="btnConnect">Verbinden</button>
+        <details class="settings" style="margin-top:10px;">
+          <summary>Einstellungen anzeigen</summary>
+          <div class="settings-body">
+            <label class="f">RPC URL</label>
+            <input class="full" id="cfgRpc" value="https://ethereum-sepolia-rpc.publicnode.com">
+            <label class="f">OracleStorage</label>
+            <input class="full" id="cfgOracle" value="0xED8816C5C64Bb46763c201924e7467525eBD4dc7">
+            <label class="f">P2PEnergyMarket</label>
+            <input class="full" id="cfgMarket" value="0x6bea08ff05D7DE58B0B703BF34EbEBdfd5971781">
+            <label class="f">BatteryManager (optional)</label>
+            <input class="full" id="cfgBattery" value="0x8F576700D1Aa0493a46c84A9Ab3B6B87cCD7039D">
+            <label class="f">Ab Block</label>
+            <input class="full" id="cfgFromBlock" value="11661170">
+          </div>
+        </details>
+      </div>`;
+    el.innerHTML = html;
+    document.getElementById('btnConnect').addEventListener('click', doConnect);
+    return;
+  }
 
-    const panel = document.createElement('div');
-    panel.className = `panel cat-${m.cat} span-${m.span}`;
-    panel.id = 'panel-'+m.id;
-    panel.innerHTML = `<h3>${m.name}</h3><div class="panel-meta" id="meta-${m.id}"></div><div id="body-${m.id}"><div class="empty">Noch nicht geladen — auf „Verbinden“ klicken.</div></div>`;
-    grid.appendChild(panel);
+  if(state.role === 'none'){
+    html += `
+      <div class="side-section login-box">
+        <div class="side-label">Login</div>
+        <button class="primary block" id="btnWalletLogin">Mit Wallet verbinden</button>
+        <span class="pk-toggle" id="togglePk">...oder mit Private Key</span>
+        <div id="pkForm" style="display:none;">
+          <div class="warn-msg" style="margin-top:8px;">⚠️ Nur für Test-Wallets ohne echten Wert. Der Key verlässt diesen Browser nie (bleibt im Seitenspeicher), ist aber grundsätzlich riskant, ihn überhaupt einzutippen.</div>
+          <input class="full" id="pkInput" type="password" placeholder="0x... (Private Key)">
+          <button class="block" id="btnPkLogin" style="margin-top:6px;">Einloggen</button>
+        </div>
+        <div id="loginError"></div>
+      </div>`;
+  } else {
+    const badgeClass = state.role==='owner' ? 'owner' : state.role==='household' ? 'household' : '';
+    const badgeText = state.role==='owner' ? 'Owner' : state.role==='household' ? 'Haushalt' : 'Unbekannt';
+    html += `
+      <div class="side-section">
+        <div class="profile-card">
+          <span class="role-badge ${badgeClass}">${badgeText}</span>
+          <div class="profile-addr">${addrLink(state.myAddress)}</div>
+        </div>
+        <button class="block" id="btnLogout" style="margin-top:8px;">Logout</button>
+      </div>`;
+
+    if(state.role === 'unknown'){
+      html += `<div class="side-section"><div class="warn-msg">Diese Adresse ist weder Owner noch als Haushalt im Market registriert. Bitte beim Owner registrieren lassen oder anderes Wallet nutzen.</div></div>`;
+    }
+
+    if(state.role === 'owner'){
+      html += `
+        <div class="side-section">
+          <div class="side-label">Navigation</div>
+          <div class="nav-item ${state.page==='overview'?'active':''}" data-page="overview">${icon('grid')} Übersicht</div>
+          <div class="nav-item ${state.page==='management'?'active':''}" data-page="management">${icon('sliders')} Verwaltung</div>
+        </div>`;
+      if(state.page === 'overview'){
+        html += `
+          <div class="side-section">
+            <div class="side-label">Haushalt auswählen</div>
+            <div class="hh-list" id="hhList">
+              <div class="hh-item ${state.viewAddress==='all'?'active':''}" data-addr="all">Alle Haushalte</div>
+              ${state.households.map(a=>`<div class="hh-item ${norm(state.viewAddress)===norm(a)?'active':''}" data-addr="${a}">${short(a)}</div>`).join('')}
+            </div>
+          </div>`;
+      }
+    }
+  }
+
+  html += `
+    <div style="flex:1;"></div>
+    <div class="side-section">
+      <button class="block" id="btnRefresh" ${state.connected?'':'disabled'}>↻ Aktualisieren</button>
+      <div class="status-line" id="lastFetchInfo">Noch keine Daten geladen.</div>
+    </div>`;
+
+  el.innerHTML = html;
+
+  const btnRefresh = document.getElementById('btnRefresh');
+  if(btnRefresh) btnRefresh.addEventListener('click', refreshAll);
+
+  const btnWalletLogin = document.getElementById('btnWalletLogin');
+  if(btnWalletLogin) btnWalletLogin.addEventListener('click', loginWithWallet);
+
+  const togglePk = document.getElementById('togglePk');
+  if(togglePk) togglePk.addEventListener('click', ()=>{
+    const f = document.getElementById('pkForm');
+    f.style.display = f.style.display==='none' ? 'block' : 'none';
+  });
+  const btnPkLogin = document.getElementById('btnPkLogin');
+  if(btnPkLogin) btnPkLogin.addEventListener('click', ()=> loginWithPrivateKey(document.getElementById('pkInput').value.trim()));
+
+  const btnLogout = document.getElementById('btnLogout');
+  if(btnLogout) btnLogout.addEventListener('click', logout);
+
+  el.querySelectorAll('.nav-item[data-page]').forEach(item=>{
+    item.addEventListener('click', ()=>{ state.page = item.dataset.page; renderSidebar(); renderMain(); });
+  });
+  el.querySelectorAll('.hh-item[data-addr]').forEach(item=>{
+    item.addEventListener('click', ()=>{ state.viewAddress = item.dataset.addr; renderSidebar(); renderMain(); });
   });
 }
-buildShell();
-
-async function safeRender(mod){
-  const body = document.getElementById('body-'+mod.id);
-  try{
-    await mod.render(body, document.getElementById('meta-'+mod.id));
-  }catch(err){
-    console.error(mod.id, err);
-    body.innerHTML = `<div class="err">Fehler in Modul „${mod.name}“: ${ (err && err.shortMessage) || (err && err.message) || err }</div>`;
-  }
-}
 
 /* ════════════════════════════════════════════════════════════════
-   CONNECTION
+   CONNECT / LOGIN
    ════════════════════════════════════════════════════════════════ */
-document.getElementById('btnConnect').addEventListener('click', async ()=>{
+async function doConnect(){
   const rpc = document.getElementById('cfgRpc').value.trim();
   const oracleAddr = document.getElementById('cfgOracle').value.trim();
   const marketAddr = document.getElementById('cfgMarket').value.trim();
   const batteryAddr = document.getElementById('cfgBattery').value.trim();
-  if(!rpc || !oracleAddr || !marketAddr){
-    alert('Bitte RPC URL, OracleStorage- und P2PEnergyMarket-Adresse ausfüllen.');
-    return;
-  }
+  if(!rpc || !oracleAddr || !marketAddr){ alert('RPC, OracleStorage- und P2PEnergyMarket-Adresse benötigt.'); return; }
   try{
     state.provider = new ethers.JsonRpcProvider(rpc);
-    await state.provider.getBlockNumber(); // sanity check
+    await state.provider.getBlockNumber();
     state.oracle = new ethers.Contract(oracleAddr, ORACLE_ABI, state.provider);
     state.market = new ethers.Contract(marketAddr, MARKET_ABI, state.provider);
     state.battery = batteryAddr ? new ethers.Contract(batteryAddr, BATTERY_ABI, state.provider) : null;
     state.connected = true;
-    document.getElementById('connDot').className = 'status-dot on';
-    document.getElementById('connText').textContent = 'Verbunden (read-only)';
-    document.getElementById('btnRefresh').disabled = false;
     await refreshAll();
+    renderSidebar();
   }catch(err){
     console.error(err);
-    document.getElementById('connDot').className = 'status-dot warn';
-    document.getElementById('connText').textContent = 'Verbindung fehlgeschlagen: ' + (err.message||err);
-  }
-});
-
-document.getElementById('btnConnectWallet').addEventListener('click', async ()=>{
-  if(!window.ethereum){
-    alert('Kein Browser-Wallet (z.B. MetaMask) gefunden.');
-    return;
-  }
-  try{
-    // eth_requestAccounts öffnet den Kontoauswahl-Dialog des im Browser installierten
-    // Wallets (z.B. MetaMask) — welches Wallet das ist, bestimmt der Browser/die
-    // Extension, nicht dieses Dashboard. Falls mehrere Wallet-Extensions installiert
-    // sind, entscheidet der Browser (oder eine Auswahl beim Klick), welche antwortet.
-    const bp = new ethers.BrowserProvider(window.ethereum);
-    await bp.send('eth_requestAccounts', []);
-    state.signer = await bp.getSigner();
-    state.walletAddress = await state.signer.getAddress();
-    const net = await bp.getNetwork();
-    const oracleAddr = document.getElementById('cfgOracle').value.trim();
-    if(oracleAddr){
-      state.oracleWithSigner = new ethers.Contract(oracleAddr, ORACLE_ABI, state.signer);
-    }
-    const marketAddr = document.getElementById('cfgMarket').value.trim();
-    if(marketAddr){
-      state.marketWithSigner = new ethers.Contract(marketAddr, MARKET_ABI, state.signer);
-    }
-    const batteryAddr = document.getElementById('cfgBattery').value.trim();
-    if(batteryAddr){
-      state.batteryWithSigner = new ethers.Contract(batteryAddr, BATTERY_ABI, state.signer);
-    }
-    const isSepolia = net.chainId === 11155111n;
-    document.getElementById('walletDot').className = 'status-dot ' + (isSepolia ? 'on' : 'warn');
-    document.getElementById('walletText').textContent =
-      `${short(state.walletAddress)} · Chain ${net.chainId}${isSepolia ? '' : ' ⚠️ nicht Sepolia!'}`;
-    const adminMod = MODULES.find(m=>m.id==='admin');
-    if(adminMod.enabled && state.connected) safeRender(adminMod);
-  }catch(err){
-    console.error(err);
-    document.getElementById('walletDot').className = 'status-dot warn';
-    document.getElementById('walletText').textContent = 'Fehler: ' + (err.message||err);
-  }
-});
-
-document.getElementById('btnRefresh').addEventListener('click', refreshAll);
-document.getElementById('cfgSlotWindow').addEventListener('change', ()=>{
-  const mod = MODULES.find(m=>m.id==='payments');
-  if(mod.enabled && state.connected) safeRender(mod);
-});
-['cfgSimStart','cfgSimMinPerSlot'].forEach(id=>{
-  document.getElementById(id).addEventListener('change', ()=>{
-    ['timeline','batteryHistory'].forEach(mid=>{
-      const mod = MODULES.find(m=>m.id===mid);
-      if(mod.enabled && state.connected) safeRender(mod);
-    });
-  });
-});
-
-async function refreshAll(){
-  const btn = document.getElementById('btnRefresh');
-  btn.disabled = true; btn.textContent = 'Lädt…';
-  try{
-    await fetchAllLogs();
-    for(const m of MODULES){
-      if(m.enabled) await safeRender(m);
-    }
-    document.getElementById('lastFetchInfo').textContent =
-      `Zuletzt geladen: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} Haushalte · ${state.logs.meter.length} Meter-Events · ${state.logs.trade.length} Trade-Events · ${state.logs.slotSettled.length} abgerechnete Slots · ${state.logs.battery.length} Batterie-Events`;
-  }finally{
-    btn.disabled = false; btn.textContent = '↻ Alle Module aktualisieren';
+    alert('Verbindung fehlgeschlagen: ' + (err.message||err));
   }
 }
 
+async function detectRole(address){
+  try{
+    const owner = await state.market.owner();
+    if(norm(owner) === norm(address)) return 'owner';
+  }catch(e){}
+  try{
+    const isHh = await state.market.isRegistered(address);
+    if(isHh) return 'household';
+  }catch(e){}
+  return 'unknown';
+}
+
+function wireSignerContracts(){
+  const marketAddr = document.getElementById('cfgMarket')?.value?.trim();
+  const oracleAddr = document.getElementById('cfgOracle')?.value?.trim();
+  const batteryAddr = document.getElementById('cfgBattery')?.value?.trim();
+  if(state.market) state.marketWithSigner = new ethers.Contract(state.market.target, MARKET_ABI, state.signer);
+  if(state.oracle) state.oracleWithSigner = new ethers.Contract(state.oracle.target, ORACLE_ABI, state.signer);
+  if(state.battery) state.batteryWithSigner = new ethers.Contract(state.battery.target, BATTERY_ABI, state.signer);
+}
+
+async function loginWithWallet(){
+  if(!window.ethereum){ alert('Kein Browser-Wallet (z.B. MetaMask) gefunden.'); return; }
+  try{
+    const bp = new ethers.BrowserProvider(window.ethereum);
+    await bp.send('eth_requestAccounts', []);
+    state.signer = await bp.getSigner();
+    state.myAddress = await state.signer.getAddress();
+    wireSignerContracts();
+    state.role = await detectRole(state.myAddress);
+    if(state.role === 'household') state.viewAddress = state.myAddress;
+    renderSidebar(); renderMain();
+  }catch(err){
+    console.error(err);
+    document.getElementById('loginError').innerHTML = `<div class="err">${err.message||err}</div>`;
+  }
+}
+
+async function loginWithPrivateKey(pk){
+  if(!pk){ return; }
+  try{
+    const wallet = new ethers.Wallet(pk, state.provider);
+    state.signer = wallet;
+    state.myAddress = wallet.address;
+    wireSignerContracts();
+    state.role = await detectRole(state.myAddress);
+    if(state.role === 'household') state.viewAddress = state.myAddress;
+    renderSidebar(); renderMain();
+  }catch(err){
+    console.error(err);
+    document.getElementById('loginError').innerHTML = `<div class="err">Ungültiger Private Key: ${err.message||err}</div>`;
+  }
+}
+
+function logout(){
+  state.signer = null; state.myAddress = null; state.role = 'none';
+  state.marketWithSigner = null; state.oracleWithSigner = null; state.batteryWithSigner = null;
+  state.viewAddress = 'all'; state.page = 'overview';
+  renderSidebar(); renderMain();
+}
+
 /* ════════════════════════════════════════════════════════════════
-   ZENTRALER DATEN-LAYER
-   Lädt einmal alle relevanten Logs & Grunddaten; Module lesen nur
-   aus state.logs / state.households statt eigene RPC-Calls zu machen.
+   DATEN-LAYER
    ════════════════════════════════════════════════════════════════ */
-// Viele öffentliche RPCs (u.a. der Standard-Sepolia-Endpoint) begrenzen
-// eth_getLogs auf eine maximale Blockspanne pro Call (häufig 50'000).
-// Wir holen die Logs deshalb in Chunks und fügen sie zusammen.
 async function queryFilterChunked(contract, filter, fromBlock, toBlock, chunkSize=45000){
   let out = [];
   let start = fromBlock;
@@ -477,8 +471,24 @@ async function queryFilterChunked(contract, filter, fromBlock, toBlock, chunkSiz
   return out;
 }
 
+async function refreshAll(){
+  const btn = document.getElementById('btnRefresh');
+  if(btn){ btn.disabled = true; btn.textContent = 'Lädt…'; }
+  try{
+    await fetchAllLogs();
+    renderSidebar();
+    renderMain();
+    const info = document.getElementById('lastFetchInfo');
+    if(info) info.textContent = `Zuletzt: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} HH · ${state.logs.meter.length} Meter · ${state.logs.trade.length} Trades · ${state.logs.battery.length} Batterie`;
+  }catch(err){
+    console.error(err);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '↻ Aktualisieren'; }
+  }
+}
+
 async function fetchAllLogs(){
-  const fromBlock = parseInt(document.getElementById('cfgFromBlock').value || '0', 10) || 0;
+  const fromBlock = parseInt(document.getElementById('cfgFromBlock')?.value || '0', 10) || 0;
   const toBlock = await state.provider.getBlockNumber();
 
   state.households = await state.market.getAllHouseholds();
@@ -490,554 +500,562 @@ async function fetchAllLogs(){
     queryFilterChunked(state.market, state.market.filters.SlotSettled(), fromBlock, toBlock),
     queryFilterChunked(state.oracle, state.oracle.filters.HouseholdRegistered(), fromBlock, toBlock),
     queryFilterChunked(state.oracle, state.oracle.filters.BatteryUpdated(), fromBlock, toBlock),
+    state.battery ? queryFilterChunked(state.battery, state.battery.filters.DecisionMade(), fromBlock, toBlock) : Promise.resolve([]),
   ];
-  const [meterLogsRaw, tradeLogsRaw, slotSettledRaw, oracleRegRaw, batteryLogsRaw] = await Promise.all(queries);
+  const [meterRaw, tradeRaw, slotSettledRaw, oracleRegRaw, batteryRaw, decisionRaw] = await Promise.all(queries);
 
   state.logs = {
-    meter: meterLogsRaw.map(l=>({
-      household: l.args.household, slot: Number(l.args.slot),
-      consumption: l.args.consumption, production: l.args.production,
-      blockNumber: l.blockNumber
-    })),
-    trade: tradeLogsRaw.map(l=>({
-      producer: l.args.producer, consumer: l.args.consumer,
-      energyWh: l.args.energyWh, amountPaid: l.args.amountPaid,
-      slot: Number(l.args.slot), blockNumber: l.blockNumber
-    })),
-    slotSettled: slotSettledRaw.map(l=>({
-      slot: Number(l.args.slot), totalEnergyTraded: l.args.totalEnergyTraded,
-      totalPaid: l.args.totalPaid, blockNumber: l.blockNumber
-    })),
+    meter: meterRaw.map(l=>({ household: l.args.household, slot: Number(l.args.slot), consumption: l.args.consumption, production: l.args.production, blockNumber: l.blockNumber })),
+    trade: tradeRaw.map(l=>({ producer: l.args.producer, consumer: l.args.consumer, energyWh: l.args.energyWh, amountPaid: l.args.amountPaid, slot: Number(l.args.slot), blockNumber: l.blockNumber })),
+    slotSettled: slotSettledRaw.map(l=>({ slot: Number(l.args.slot), totalEnergyTraded: l.args.totalEnergyTraded, totalPaid: l.args.totalPaid, blockNumber: l.blockNumber })),
     oracleRegistered: [...new Set(oracleRegRaw.map(l=>l.args.household))],
-    battery: batteryLogsRaw.map(l=>({
-      household: l.args.household, slot: Number(l.args.slot), soc: Number(l.args.soc),
-      blockNumber: l.blockNumber
-    })),
+    battery: batteryRaw.map(l=>({ household: l.args.household, slot: Number(l.args.slot), soc: Number(l.args.soc), blockNumber: l.blockNumber })),
+    decisions: decisionRaw.map(l=>({ household: l.args.household, amountWh: l.args.amountWh, slot: Number(l.args.slot), reason: l.args.reason, blockNumber: l.blockNumber })),
   };
 
   await fetchBlockTimestamps();
+  const allTs = Object.values(state.blockTimestamps);
+  state.firstBlockTs = allTs.length ? Math.min(...allTs) : null;
 }
 
-// Holt Unix-Timestamps für alle Blöcke, die in den geladenen Logs vorkommen —
-// dedupliziert & gecacht, damit Timeline/Zahlungsübersicht echte Uhrzeiten
-// statt nur Slot-Nummern zeigen können. Auf eine sinnvolle Menge begrenzt,
-// damit ein grosser Blockbereich nicht hunderte einzelne RPC-Calls auslöst.
 async function fetchBlockTimestamps(){
   const allBlocks = new Set([
-    ...state.logs.meter.map(l=>l.blockNumber),
-    ...state.logs.trade.map(l=>l.blockNumber),
-    ...state.logs.slotSettled.map(l=>l.blockNumber),
-    ...state.logs.battery.map(l=>l.blockNumber),
+    ...state.logs.meter.map(l=>l.blockNumber), ...state.logs.trade.map(l=>l.blockNumber),
+    ...state.logs.slotSettled.map(l=>l.blockNumber), ...state.logs.battery.map(l=>l.blockNumber),
+    ...state.logs.decisions.map(l=>l.blockNumber),
   ]);
   const toFetch = [...allBlocks].filter(b=> !(b in state.blockTimestamps));
-  const capped = toFetch.slice(-300); // neueste 300 unbekannte Blöcke, um RPC-Last zu begrenzen
-  const results = await Promise.all(capped.map(b=> state.provider.getBlock(b).catch(()=>null)));
-  results.forEach((blk,i)=>{ if(blk) state.blockTimestamps[capped[i]] = blk.timestamp; });
+  // Kein harter Deckel mehr (führte bei längeren Simulationen zu fehlenden Zeitangaben) —
+  // stattdessen in Batches abrufen, um den RPC nicht mit tausenden Calls auf einmal zu treffen.
+  const BATCH = 60;
+  for(let i=0; i<toFetch.length; i+=BATCH){
+    const batch = toFetch.slice(i, i+BATCH);
+    const results = await Promise.all(batch.map(b=> state.provider.getBlock(b).catch(()=>null)));
+    results.forEach((blk,j)=>{ if(blk) state.blockTimestamps[batch[j]] = blk.timestamp; });
+  }
 }
 function blockTime(blockNumber){ return state.blockTimestamps[blockNumber] || null; }
 
 /* ════════════════════════════════════════════════════════════════
-   MODUL: Haushalte
+   MAIN ROUTER
    ════════════════════════════════════════════════════════════════ */
-async function renderHouseholds(body, meta){
-  const hs = state.households;
-  meta.textContent = `${hs.length} im P2PEnergyMarket registriert`;
-  if(hs.length===0){ body.innerHTML = '<div class="empty">Keine Haushalte registriert.</div>'; return; }
-  const rows = hs.map(a=>`<tr><td class="addr">${addrLink(a)}</td><td><span class="tag yes">registriert</span></td></tr>`).join('');
-  body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>Markt-Status</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Verbrauch & Produktion (Timeline über Slots)
-   ════════════════════════════════════════════════════════════════ */
-async function renderTimeline(body, meta){
-  const households = state.households;
-  body.innerHTML = `
-    <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center;">
-      <select id="timelineHousehold">
-        <option value="__all__">Alle Haushalte (Summe)</option>
-        ${households.map(a=>`<option value="${a}">${short(a)}</option>`).join('')}
-      </select>
-      <div class="flow-legend">
-        <span><span class="swatch" style="background:var(--consume)"></span>Verbrauch</span>
-        <span><span class="swatch" style="background:var(--produce)"></span>Produktion</span>
-      </div>
-    </div>
-    <canvas id="timelineChart" height="90"></canvas>
-  `;
-  meta.textContent = `${state.logs.meter.length} Meter-Datenpunkte geladen`;
-  document.getElementById('timelineHousehold').addEventListener('change', drawTimeline);
-  drawTimeline();
-
-  function drawTimeline(){
-    const sel = document.getElementById('timelineHousehold').value;
-    const filtered = sel==='__all__' ? state.logs.meter : state.logs.meter.filter(m=>norm(m.household)===norm(sel));
-    const bySlot = {};
-    filtered.forEach(m=>{
-      if(!bySlot[m.slot]) bySlot[m.slot] = {c:0n,p:0n,block:m.blockNumber};
-      bySlot[m.slot].c += BigInt(m.consumption);
-      bySlot[m.slot].p += BigInt(m.production);
-      bySlot[m.slot].block = Math.min(bySlot[m.slot].block, m.blockNumber);
-    });
-    const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
-    const consumption = slots.map(s=>Number(bySlot[s].c)/1000);
-    const production = slots.map(s=>Number(bySlot[s].p)/1000);
-    const chainTimes = slots.map(s=> blockTime(bySlot[s].block));
-
-    const ctx = document.getElementById('timelineChart');
-    if(slots.length===0){ ctx.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'Keine Meter-Daten im gewählten Blockbereich.'})); return; }
-    try{
-      if(state.charts.timeline) state.charts.timeline.destroy();
-      state.charts.timeline = new Chart(ctx, {
-        type:'line',
-        data:{ labels: slots.map((s,idx)=>simTimeLabel(idx)), datasets:[
-          { label:'Verbrauch (kWh)', data:consumption, borderColor:'#E2A339', backgroundColor:'rgba(226,163,57,.12)', tension:.25, fill:true, pointRadius:2 },
-          { label:'Produktion (kWh)', data:production, borderColor:'#49C9B0', backgroundColor:'rgba(73,201,176,.12)', tension:.25, fill:true, pointRadius:2 },
-        ]},
-        options:{ responsive:true, plugins:{
-          legend:{labels:{color:'#8B98A0'}},
-          tooltip:{ callbacks:{ afterTitle: (items)=>{
-            const i = items[0].dataIndex;
-            const t = chainTimes[i];
-            return [`Slot ${slots[i]}`, t ? `Chain-Zeit: ${fmtTime(t)}` : ''].filter(Boolean);
-          } } }
-        }, scales:{
-          x:{ title:{display:true,text:'Simulierte Zeit (Näherung)',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
-          y:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
-        }}
-      });
-    }catch(err){
-      console.error('timeline chart', err);
-      ctx.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden — Daten liegen aber vor ('+slots.length+' Slots).'}));
-    }
-  }
-}
-
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Batterie-Status (live, animiert)
-   Nutzt battery.getBatteryStatus() — Signatur exakt aus der
-   mitgelieferten Testdatei bestätigt (soc, capacity, reserveSoc,
-   charged, discharged). Lade-/Entlade-Trend wird aus den letzten
-   zwei BatteryUpdated-Oracle-Events abgeleitet (steigender/fallender
-   SoC), nicht aus decideAction() — dessen Action-Enum-Reihenfolge
-   noch nicht bestätigt ist.
-   ════════════════════════════════════════════════════════════════ */
-async function renderBatteryStatus(body, meta){
-  if(!state.battery){
-    body.innerHTML = '<div class="empty">Kein BatteryManager konfiguriert (optionales Feld oben ausfüllen).</div>';
-    meta.textContent = '';
+function renderMain(){
+  const el = document.getElementById('main');
+  if(!state.connected){
+    el.innerHTML = `<div class="page-header"><h1>Willkommen</h1></div><div class="empty">Verbinde zuerst mit der Blockchain (Sidebar links).</div>`;
     return;
   }
-  const managed = state.batteryHouseholds;
-  meta.textContent = `${managed.length} beim BatteryManager registriert`;
-  if(managed.length===0){ body.innerHTML = '<div class="empty">Noch keine Haushalte beim BatteryManager registriert.</div>'; return; }
+  if(state.role === 'none'){
+    el.innerHTML = `<div class="page-header"><h1>Login erforderlich</h1></div><div class="empty">Bitte mit Wallet oder Private Key einloggen (Sidebar links).</div>`;
+    return;
+  }
+  if(state.role === 'unknown'){
+    el.innerHTML = `<div class="page-header"><h1>Nicht registriert</h1></div><div class="empty">Diese Adresse ist weder Owner noch als Haushalt registriert.</div>`;
+    return;
+  }
+  if(state.page === 'management' && state.role === 'owner'){
+    renderManagementPage(el);
+  } else {
+    renderOverviewPage(el);
+  }
+}
 
-  const [statuses, previews] = await Promise.all([
-    Promise.all(managed.map(a=> state.battery.getBatteryStatus(a).catch(()=>null))),
-    Promise.all(managed.map(a=> state.battery.previewAction(a).catch(()=>null))),
-  ]);
+/* ════════════════════════════════════════════════════════════════
+   ENERGY-FLOW BERECHNUNG (pro Haushalt oder aggregiert)
+   ════════════════════════════════════════════════════════════════ */
+function computeEnergyFlow(scope){
+  // scope: 'all' oder eine einzelne Adresse
+  const isAll = scope === 'all';
+  const inScope = (addr) => isAll || norm(addr) === norm(scope);
 
-  // Aktuelles Netto (Produktion-Verbrauch) je Haushalt aus dem neuesten Meter-Event —
-  // zusammen mit amountWh>0 aus previewAction() reicht das, um CHARGE/DISCHARGE
-  // eindeutig zu unterscheiden, ganz ohne die Action-Enum-Kodierung zu kennen:
-  // laut _evaluate() im Contract liefert netto>0 nie DISCHARGE und netto<0 nie CHARGE.
-  const lastNetto = {};
-  managed.forEach(addr=>{
-    const evs = state.logs.meter.filter(m=>norm(m.household)===norm(addr));
-    if(evs.length===0){ lastNetto[addr] = 0n; return; }
-    const last = evs.reduce((a,b)=> a.blockNumber>b.blockNumber?a:b);
-    lastNetto[addr] = BigInt(last.production) - BigInt(last.consumption);
+  const meterBySlot = {}; // slot -> {production, consumption}
+  state.logs.meter.filter(m=>inScope(m.household)).forEach(m=>{
+    if(!meterBySlot[m.slot]) meterBySlot[m.slot] = {production:0n, consumption:0n, block:m.blockNumber};
+    meterBySlot[m.slot].production += BigInt(m.production);
+    meterBySlot[m.slot].consumption += BigInt(m.consumption);
+    meterBySlot[m.slot].block = Math.min(meterBySlot[m.slot].block, m.blockNumber);
   });
 
-  const cards = managed.map((addr,i)=>{
-    const st = statuses[i];
-    const pv = previews[i];
+  const tradeBySlot = {}; // slot -> {bought, sold}
+  state.logs.trade.forEach(t=>{
+    const buyerInScope = inScope(t.consumer), sellerInScope = inScope(t.producer);
+    if(!buyerInScope && !sellerInScope) return;
+    if(!tradeBySlot[t.slot]) tradeBySlot[t.slot] = {bought:0n, sold:0n};
+    if(buyerInScope) tradeBySlot[t.slot].bought += BigInt(t.energyWh);
+    if(sellerInScope) tradeBySlot[t.slot].sold += BigInt(t.energyWh);
+  });
+
+  // Batterie-Delta pro Slot: bevorzugt aus DecisionMade (amountWh + Richtung via Netto-Vorzeichen),
+  // sonst Fallback aus SoC-Differenz zwischen aufeinanderfolgenden BatteryUpdated-Events.
+  const battBySlot = {}; // slot -> {charge, discharge} in Wh
+  const decisionsInScope = state.logs.decisions.filter(d=>inScope(d.household));
+  decisionsInScope.forEach(d=>{
+    const m = meterBySlot[d.slot];
+    const netto = m ? (m.production - m.consumption) : 0n;
+    if(!battBySlot[d.slot]) battBySlot[d.slot] = {charge:0n, discharge:0n};
+    if(netto > 0n) battBySlot[d.slot].charge += BigInt(d.amountWh);
+    else if(netto < 0n) battBySlot[d.slot].discharge += BigInt(d.amountWh);
+  });
+  if(decisionsInScope.length === 0 && state.logs.battery.length > 0){
+    // Fallback: SoC-Delta * (geschätzte Kapazität aus getBatteryStatus, falls verfügbar, sonst grobe Näherung ausgelassen)
+    const relevant = isAll ? state.batteryHouseholds : state.batteryHouseholds.filter(a=>norm(a)===norm(scope));
+    relevant.forEach(addr=>{
+      const evs = state.logs.battery.filter(b=>norm(b.household)===norm(addr)).sort((a,b)=>a.slot-b.slot);
+      for(let i=1;i<evs.length;i++){
+        const diff = evs[i].soc - evs[i-1].soc; // Prozentpunkte, ohne Kapazität nur Richtung nutzbar
+        if(diff===0) continue;
+        if(!battBySlot[evs[i].slot]) battBySlot[evs[i].slot] = {charge:0n, discharge:0n};
+        // Ohne Kapazitäts-Call hier nur Richtung, keine Wh-Menge -> als grobe Markierung mit 0 Wh weglassen.
+      }
+    });
+  }
+
+  const slots = Object.keys(meterBySlot).map(Number).sort((a,b)=>a-b);
+  let result = slots.map(s=>{
+    const m = meterBySlot[s];
+    const production = Number(m.production), consumption = Number(m.consumption);
+    const bought = Number((tradeBySlot[s]||{}).bought || 0n);
+    const sold = Number((tradeBySlot[s]||{}).sold || 0n);
+    const charge = Number((battBySlot[s]||{}).charge || 0n);
+    const discharge = Number((battBySlot[s]||{}).discharge || 0n);
+
+    const ownUse = Math.min(production, consumption);
+    let remDeficit = Math.max(0, consumption - production);
+    const coveredByBattery = Math.min(remDeficit, discharge);
+    remDeficit -= coveredByBattery;
+    const coveredByImport = Math.min(remDeficit, bought);
+    const unmet = Math.max(0, remDeficit - coveredByImport);
+
+    let remSurplus = Math.max(0, production - consumption);
+    const toBattery = Math.min(remSurplus, charge);
+    remSurplus -= toBattery;
+    const toExport = Math.min(remSurplus, sold);
+    const curtailed = Math.max(0, remSurplus - toExport);
+
+    return { slot:s, block:m.block, production, consumption, ownUse, coveredByBattery, coveredByImport, unmet, toBattery, toExport, curtailed };
+  });
+
+  // Zeitraum-Filter (echte Kalendertage, basierend auf Block-Timestamps).
+  if(state.timeRangeDays !== 'all' && result.length > 0){
+    const timestamps = result.map(f=>blockTime(f.block)).filter(Boolean);
+    if(timestamps.length){
+      const cutoff = Math.max(...timestamps) - Number(state.timeRangeDays) * 86400;
+      result = result.filter(f=>{ const t = blockTime(f.block); return t===null || t >= cutoff; });
+    }
+  }
+  return result;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   OVERVIEW PAGE
+   ════════════════════════════════════════════════════════════════ */
+async function renderOverviewPage(el){
+  const scope = state.role==='household' ? state.myAddress : state.viewAddress;
+  const isAll = scope === 'all';
+  const title = isAll ? 'Übersicht — Alle Haushalte' : `Übersicht — ${short(scope)}`;
+
+  el.innerHTML = `
+    <div class="page-header"><h1>${title}</h1><div class="sub" id="ovMeta"></div></div>
+    <div class="kpi-row" id="kpiRow"></div>
+    <div class="section-row" style="margin-bottom:0;">
+      <div></div>
+      <div style="text-align:right;margin-bottom:10px;">
+        <label class="f" style="display:inline;margin-right:6px;">Zeitraum (Charts):</label>
+        <select id="timeRangeSelect">
+          <option value="all">Alle Daten</option>
+          <option value="1">Letzter Tag</option>
+          <option value="3">Letzte 3 Tage</option>
+          <option value="5">Letzte 5 Tage</option>
+          <option value="7">Letzte 7 Tage</option>
+        </select>
+      </div>
+    </div>
+    <div class="section">
+      <h2>${icon('chart')} Verbrauch & Produktion (Rohdaten)</h2>
+      <div class="desc">Reine Messwerte ohne Aufschlüsselung nach Quelle — für die Herkunft (Batterie/P2P/Eigenverbrauch) siehe "Energiefluss pro Slot" unten.</div>
+      <canvas id="rawTimelineChart" height="80"></canvas>
+    </div>
+    <div class="section">
+      <h2>${icon('zap')} Energiefluss pro Slot</h2>
+      <div class="desc">Woher Verbrauch gedeckt wird (Eigenproduktion / Batterie / Zukauf / ungedeckt) und wohin Produktion geht (Eigenverbrauch / Batterie / Verkauf / ungenutzt). X-Achse: rekonstruierte simulierte Uhrzeit.</div>
+      <div class="flow-legend">
+        <span><span class="swatch" style="background:#49C9B0"></span>Eigenverbrauch</span>
+        <span><span class="swatch" style="background:#8B7FE8"></span>Batterie</span>
+        <span><span class="swatch" style="background:#5B8DEF"></span>P2P Zukauf/Verkauf</span>
+        <span><span class="swatch" style="background:#5B666D"></span>Ungenutzt</span>
+        <span><span class="swatch" style="background:#E1573F"></span>Ungedeckt</span>
+      </div>
+      <canvas id="flowChart" height="90"></canvas>
+    </div>
+    <div class="section-row">
+      <div class="section"><h2>${icon('battery')} Batterie-Status</h2><div id="battStatusBox"></div></div>
+      <div class="section"><h2>${icon('pulse')} Batterie-Verlauf (SoC)</h2><div id="battHistBox"></div></div>
+    </div>
+    <div class="section" id="ledgerSection"></div>
+    <div class="section"><h2>${icon('card')} Zahlungsübersicht</h2><div id="paymentsBox"></div></div>
+    ${state.role==='household' ? `<div class="section"><h2>${icon('unlock')} Stablecoin-Freigabe</h2><div id="approveBox"></div></div>` : (isAll ? '' : `<div class="empty" style="font-size:11px;">${icon('info')} Stablecoin-Freigabe kann nur vom Haushalt selbst mit dessen eigenem Wallet erteilt werden — als Owner nicht verfügbar.</div>`)}
+  `;
+
+  document.getElementById('timeRangeSelect').value = state.timeRangeDays;
+  document.getElementById('timeRangeSelect').addEventListener('change', (e)=>{
+    state.timeRangeDays = e.target.value;
+    renderRawTimeline(scope);
+    renderFlowChart(scope);
+  });
+
+  try{ await renderKpis(scope); }catch(e){ console.error(e); }
+  try{ await renderRawTimeline(scope); }catch(e){ console.error(e); document.getElementById('rawTimelineChart').replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Fehler: '+(e.message||e)})); }
+  try{ await renderFlowChart(scope); }catch(e){ console.error(e); document.getElementById('flowChart').replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Fehler: '+(e.message||e)})); }
+  try{ await renderBatteryStatusBox(scope); }catch(e){ console.error(e); document.getElementById('battStatusBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  try{ await renderBatteryHistBox(scope); }catch(e){ console.error(e); document.getElementById('battHistBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  try{ await renderLedgerSection(scope); }catch(e){ console.error(e); document.getElementById('ledgerSection').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  try{ await renderPaymentsBox(scope); }catch(e){ console.error(e); document.getElementById('paymentsBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  if(state.role==='household'){
+    try{ await renderApproveBox(); }catch(e){ console.error(e); document.getElementById('approveBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  }
+}
+
+async function renderKpis(scope){
+  const isAll = scope === 'all';
+  const flow = computeEnergyFlow(scope);
+  const totalProd = flow.reduce((a,f)=>a+f.production,0);
+  const totalCons = flow.reduce((a,f)=>a+f.consumption,0);
+  const selfSuff = totalCons>0 ? (Math.min(totalProd,totalCons)/totalCons*100) : (totalProd>0?100:0);
+
+  let saldo = 0;
+  state.logs.trade.forEach(t=>{
+    const p = norm(t.producer), c = norm(t.consumer);
+    if(isAll || p===norm(scope)) saldo += Number(t.amountPaid)/1e6;
+    if(isAll || c===norm(scope)) saldo -= Number(t.amountPaid)/1e6;
+  });
+  if(isAll) saldo = 0; // systemweit netto immer 0 (Geld fliesst nur intern um)
+
+  document.getElementById('ovMeta').textContent = `${flow.length} Slots geladen`;
+  document.getElementById('kpiRow').innerHTML = `
+    <div class="kpi-card"><div class="v">${fmtKwh(totalProd)}</div><div class="l">Produktion (kWh, gesamt)</div></div>
+    <div class="kpi-card"><div class="v">${fmtKwh(totalCons)}</div><div class="l">Verbrauch (kWh, gesamt)</div></div>
+    <div class="kpi-card"><div class="v">${selfSuff.toFixed(0)}%</div><div class="l">Selbstversorgung</div></div>
+    ${isAll ? '' : `<div class="kpi-card"><div class="v ${saldo>=0?'ok':'warn'}">${saldo>=0?'+':''}${saldo.toFixed(3)}</div><div class="l">Saldo (Token)</div></div>`}
+  `;
+}
+
+async function renderRawTimeline(scope){
+  const flow = computeEnergyFlow(scope);
+  const ctx = document.getElementById('rawTimelineChart');
+  if(!ctx) return;
+  if(flow.length===0){ ctx.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'Keine Daten.'})); return; }
+  const labels = flow.map(f=>simTimeLabel(blockTime(f.block)));
+  if(state.charts.rawTimeline) state.charts.rawTimeline.destroy();
+  state.charts.rawTimeline = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Verbrauch (kWh)', data:flow.map(f=>f.consumption/1000), borderColor:'#E2A339', backgroundColor:'rgba(226,163,57,.10)', tension:.25, fill:true, pointRadius:1.5 },
+      { label:'Produktion (kWh)', data:flow.map(f=>f.production/1000), borderColor:'#49C9B0', backgroundColor:'rgba(73,201,176,.10)', tension:.25, fill:true, pointRadius:1.5 },
+    ]},
+    options:{ responsive:true, plugins:{ legend:{labels:{color:'#8B98A0'}},
+      tooltip:{ callbacks:{ afterTitle:(items)=>`Slot ${flow[items[0].dataIndex].slot}` } } },
+      scales:{ x:{ title:{display:true,text:'Simulierte Zeit',color:'#5B666D'}, ticks:{color:'#5B666D',maxRotation:0,autoSkip:true}, grid:{display:false} },
+               y:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} } }
+    }
+  });
+}
+
+async function renderFlowChart(scope){
+  const flow = computeEnergyFlow(scope);
+  const ctx = document.getElementById('flowChart');
+  if(flow.length===0){ ctx.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'Keine Daten.'})); return; }
+  const labels = flow.map(f=>simTimeLabel(blockTime(f.block)));
+
+  if(state.charts.flow) state.charts.flow.destroy();
+  state.charts.flow = new Chart(ctx, {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Eigenverbrauch (Produktion)', data:flow.map(f=>f.ownUse/1000), backgroundColor:'#49C9B0', stack:'supply' },
+      { label:'Batterie-Ladung', data:flow.map(f=>f.toBattery/1000), backgroundColor:'#8B7FE8', stack:'supply' },
+      { label:'Verkauf (P2P)', data:flow.map(f=>f.toExport/1000), backgroundColor:'#5B8DEF', stack:'supply' },
+      { label:'Ungenutzt', data:flow.map(f=>f.curtailed/1000), backgroundColor:'#5B666D', stack:'supply' },
+      { label:'Eigenversorgt (Verbrauch)', data:flow.map(f=>-f.ownUse/1000), backgroundColor:'#49C9B0', stack:'demand' },
+      { label:'Batterie-Entladung', data:flow.map(f=>-f.coveredByBattery/1000), backgroundColor:'#8B7FE8', stack:'demand' },
+      { label:'Zukauf (P2P)', data:flow.map(f=>-f.coveredByImport/1000), backgroundColor:'#5B8DEF', stack:'demand' },
+      { label:'Ungedeckt', data:flow.map(f=>-f.unmet/1000), backgroundColor:'#E1573F', stack:'demand' },
+    ]},
+    options:{ responsive:true, plugins:{ legend:{labels:{color:'#8B98A0', boxWidth:11, font:{size:10.5}}},
+      tooltip:{ callbacks:{ afterTitle:(items)=>`Slot ${flow[items[0].dataIndex].slot}`,
+        label:(item)=> `${item.dataset.label}: ${Math.abs(item.parsed.y).toFixed(3)} kWh` } }
+    }, scales:{
+      x:{ title:{display:true,text:'Simulierte Zeit',color:'#5B666D'}, ticks:{color:'#5B666D', maxRotation:0, autoSkip:true}, grid:{display:false}, stacked:true },
+      y:{ title:{display:true,text:'kWh (oben=Angebot, unten=Bedarf)',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'}, stacked:true }
+    }}
+  });
+}
+
+async function renderBatteryStatusBox(scope){
+  const box = document.getElementById('battStatusBox');
+  if(!state.battery){ box.innerHTML = '<div class="empty">Kein BatteryManager konfiguriert.</div>'; return; }
+  const isAll = scope === 'all';
+  const targets = isAll ? state.batteryHouseholds : state.batteryHouseholds.filter(a=>norm(a)===norm(scope));
+  if(targets.length===0){ box.innerHTML = `<div class="empty">${isAll?'Keine Haushalte beim BatteryManager registriert.':'Dieser Haushalt hat keine Batterie.'}</div>`; return; }
+
+  const [statuses, previews] = await Promise.all([
+    Promise.all(targets.map(a=>state.battery.getBatteryStatus(a).catch(()=>null))),
+    Promise.all(targets.map(a=>state.battery.previewAction(a).catch(()=>null))),
+  ]);
+  const lastNetto = {};
+  targets.forEach(addr=>{
+    const evs = state.logs.meter.filter(m=>norm(m.household)===norm(addr));
+    if(evs.length===0){ lastNetto[addr]=0n; return; }
+    const last = evs.reduce((a,b)=>a.blockNumber>b.blockNumber?a:b);
+    lastNetto[addr] = BigInt(last.production)-BigInt(last.consumption);
+  });
+
+  const cards = targets.map((addr,i)=>{
+    const st = statuses[i], pv = previews[i];
     if(!st) return `<div class="battery-card"><span class="addr-link">${addrLink(addr)}</span><div class="empty">Kein Status</div></div>`;
     const soc = Number(st.soc);
-    const lvl = soc<20 ? 'lvl-low' : soc<60 ? 'lvl-mid' : 'lvl-high';
-
-    let trend = 'idle', reasonText = '';
-    if(pv && Number(pv.amountWh) > 0){
-      trend = lastNetto[addr] > 0n ? 'charge' : lastNetto[addr] < 0n ? 'discharge' : 'idle';
-      reasonText = pv.reason;
-    } else if(pv){
-      reasonText = pv.reason;
-    }
-    const icon = trend==='charge' ? '⚡' : trend==='discharge' ? '↓' : '';
-    const label = trend==='charge' ? `Lädt (+${fmtKwh(pv.amountWh)} kWh)` : trend==='discharge' ? `Entlädt (-${fmtKwh(pv.amountWh)} kWh)` : 'Ruht';
-
+    const lvl = soc<20?'lvl-low':soc<60?'lvl-mid':'lvl-high';
+    let trend='idle', reasonText='';
+    if(pv && Number(pv.amountWh)>0){ trend = lastNetto[addr]>0n?'charge':lastNetto[addr]<0n?'discharge':'idle'; reasonText=pv.reason; }
+    else if(pv){ reasonText = pv.reason; }
+    const iconHtml = trend==='charge'?icon('zap',13):trend==='discharge'?icon('down',13):'';
+    const label = trend==='charge'?`Lädt (+${fmtKwh(pv.amountWh)} kWh)`:trend==='discharge'?`Entlädt (-${fmtKwh(pv.amountWh)} kWh)`:'Ruht';
     return `<div class="battery-card">
       <span class="addr-link">${addrLink(addr)}</span>
       <div class="battery-shell">
-        <div class="battery-bolt ${trend!=='idle' ? 'show-'+trend : ''}" style="font-size:13px;line-height:14px;">${icon}</div>
+        <div class="battery-bolt ${trend!=='idle'?'show-'+trend:''}">${iconHtml}</div>
         <div class="battery-fill ${lvl} ${trend==='charge'?'charging':''}" style="height:${Math.max(2,Math.min(100,soc))}%"></div>
         <div class="battery-pct">${soc}%</div>
       </div>
       <div class="battery-status-label ${trend}">${label}</div>
-      ${reasonText ? `<div class="battery-status-label" style="font-style:italic;margin-top:2px;">${reasonText}</div>` : ''}
+      ${reasonText?`<div class="battery-status-label" style="font-style:italic;margin-top:2px;">${reasonText}</div>`:''}
       <div class="battery-meta-row"><span>${fmtKwh(st.capacity)} kWh</span><span>Reserve ${Number(st.reserveSoc)}%</span></div>
       <div class="battery-meta-row"><span>Σ +${fmtKwh(st.charged)}</span><span>Σ -${fmtKwh(st.discharged)}</span></div>
     </div>`;
   }).join('');
-
-  body.innerHTML = `<div class="battery-grid">${cards}</div>`;
+  box.innerHTML = `<div class="battery-grid">${cards}</div>`;
 }
 
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Batterie-Verlauf (SoC über Slots)
-   Quelle: OracleStorage.BatteryUpdated-Events — unabhängig davon,
-   ob eine BatteryManager-Adresse konfiguriert ist.
-   ════════════════════════════════════════════════════════════════ */
-async function renderBatteryHistory(body, meta){
-  const households = [...new Set(state.logs.battery.map(b=>norm(b.household)))];
-  if(households.length===0){
-    body.innerHTML = '<div class="empty">Keine BatteryUpdated-Events geladen.</div>';
-    meta.textContent = '';
+async function renderBatteryHistBox(scope){
+  const box = document.getElementById('battHistBox');
+  const isAll = scope === 'all';
+  const targets = isAll ? [...new Set(state.logs.battery.map(b=>norm(b.household)))] : [norm(scope)];
+  const available = targets.filter(a=> state.logs.battery.some(b=>norm(b.household)===a));
+  if(available.length===0){ box.innerHTML = '<div class="empty">Keine BatteryUpdated-Events.</div>'; return; }
+
+  box.innerHTML = isAll
+    ? `<select id="battHhSelect" class="full" style="margin-bottom:10px;">${available.map(a=>`<option value="${a}">${short(a)}</option>`).join('')}</select><canvas id="battHistChart" height="110"></canvas>`
+    : `<canvas id="battHistChart" height="110"></canvas>`;
+
+  const draw = ()=>{
+    const sel = isAll ? document.getElementById('battHhSelect').value : available[0];
+    const points = state.logs.battery.filter(b=>norm(b.household)===sel).sort((a,b)=>a.slot-b.slot);
+    const ctx = document.getElementById('battHistChart');
+    if(state.charts.battHist) state.charts.battHist.destroy();
+    state.charts.battHist = new Chart(ctx, {
+      type:'line',
+      data:{ labels: points.map(p=>simTimeLabel(blockTime(p.blockNumber))), datasets:[
+        { label:'SoC (%)', data: points.map(p=>p.soc), borderColor:'#8B7FE8', backgroundColor:'rgba(139,127,232,.15)', tension:.3, fill:true, pointRadius:2 },
+      ]},
+      options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}},
+        tooltip:{ callbacks:{ afterTitle:(items)=>`Slot ${points[items[0].dataIndex].slot}` } } },
+        scales:{ x:{title:{display:true,text:'Simulierte Zeit',color:'#5B666D'},ticks:{color:'#5B666D',maxRotation:0,autoSkip:true},grid:{color:'rgba(255,255,255,.04)'}},
+                 y:{min:0,max:100,ticks:{color:'#5B666D'},grid:{color:'rgba(255,255,255,.04)'}} }
+      }
+    });
+  };
+  if(isAll) document.getElementById('battHhSelect').addEventListener('change', draw);
+  draw();
+}
+
+async function renderLedgerSection(scope){
+  const isAll = scope === 'all';
+  const box = document.getElementById('ledgerSection');
+  if(!isAll){
+    const flow = computeEnergyFlow(scope);
+    const totalProd = flow.reduce((a,f)=>a+f.production,0), totalCons = flow.reduce((a,f)=>a+f.consumption,0);
+    box.innerHTML = `<h2>${icon('chart')} Selbstversorgung & Saldo</h2><div class="desc">Bereits oben als KPI zusammengefasst — Produktion ${fmtKwh(totalProd)} kWh, Verbrauch ${fmtKwh(totalCons)} kWh.</div>`;
     return;
   }
-  meta.textContent = `${state.logs.battery.length} Batterie-Datenpunkte`;
-  body.innerHTML = `
-    <div style="margin-bottom:10px;">
-      <select id="batteryHousehold">${households.map(a=>`<option value="${a}">${short(a)}</option>`).join('')}</select>
-    </div>
-    <canvas id="batteryChart" height="110"></canvas>`;
-  document.getElementById('batteryHousehold').addEventListener('change', draw);
-  draw();
-
-  function draw(){
-    const sel = document.getElementById('batteryHousehold').value;
-    const points = state.logs.battery.filter(b=>norm(b.household)===norm(sel)).sort((a,b)=>a.slot-b.slot);
-    const ctx = document.getElementById('batteryChart');
-    try{
-      if(state.charts.battery) state.charts.battery.destroy();
-      state.charts.battery = new Chart(ctx, {
-        type:'line',
-        data:{ labels: points.map((p,idx)=>simTimeLabel(idx)), datasets:[
-          { label:'SoC (%)', data: points.map(p=>p.soc), borderColor:'#5B8DEF', backgroundColor:'rgba(91,141,239,.15)', tension:.3, fill:true, pointRadius:2 },
-        ]},
-        options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}},
-          tooltip:{ callbacks:{ afterTitle:(items)=>{
-            const p=points[items[0].dataIndex]; const t=blockTime(p.blockNumber);
-            return [`Slot ${p.slot}`, t ? `Chain-Zeit: ${fmtTime(t)}` : ''].filter(Boolean);
-          } } }
-        }, scales:{
-          x:{ title:{display:true,text:'Simulierte Zeit (Näherung)',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
-          y:{ min:0, max:100, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
-        }}
-      });
-    }catch(err){
-      console.error('battery chart', err);
-      ctx.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden.'}));
-    }
-  }
-}
-
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Trade-Netzwerk-Graph pro Slot
-   ════════════════════════════════════════════════════════════════ */
-async function renderNetworkGraph(body, meta){
-  const slots = [...new Set(state.logs.slotSettled.map(s=>s.slot))].sort((a,b)=>b-a);
-  if(slots.length===0){ body.innerHTML = '<div class="empty">Noch keine abgerechneten Slots (SlotSettled).</div>'; meta.textContent=''; return; }
-  body.innerHTML = `
-    <div style="margin-bottom:10px;"><select id="netSlotSelect">${slots.map(s=>`<option value="${s}">Slot ${s}</option>`).join('')}</select></div>
-    <div id="netSvgHolder"></div>
-  `;
-  meta.textContent = `${slots.length} abgerechnete Slots`;
-  document.getElementById('netSlotSelect').addEventListener('change', draw);
-  draw();
-
-  function draw(){
-    const slot = Number(document.getElementById('netSlotSelect').value);
-    const trades = state.logs.trade.filter(t=>t.slot===slot);
-    const holder = document.getElementById('netSvgHolder');
-    if(trades.length===0){
-      const otherSlots = [...new Set(state.logs.trade.map(t=>t.slot))];
-      holder.innerHTML = `<div class="empty">Keine Trades in Slot ${slot}.<br>
-        Insgesamt geladen: ${state.logs.trade.length} Trade-Event(s)${otherSlots.length ? ', in Slot(s): '+otherSlots.join(', ') : ''}.<br>
-        Falls dieser Slot laut Etherscan Trades enthalten sollte: prüfe, ob die konfigurierte P2PEnergyMarket-Adresse mit der Adresse in der Transaktion übereinstimmt, und ob „Ab Block" niedrig genug gesetzt ist.</div>`;
-      return;
-    }
-
-    const involved = [...new Set(trades.flatMap(t=>[t.producer,t.consumer]))];
-    const n = involved.length;
-    const size = 340, cx = size/2, cy = size/2, r = size*0.36;
-    const pos = {};
-    involved.forEach((addr,i)=>{
-      const ang = (i / n) * Math.PI*2 - Math.PI/2;
-      pos[addr] = { x: cx + r*Math.cos(ang), y: cy + r*Math.sin(ang) };
-    });
-
-    const maxFlow = Math.max(...trades.map(t=>Number(t.energyWh)));
-    let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" style="max-width:380px;display:block;margin:0 auto;">
-      <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#49C9B0"/></marker></defs>`;
-
-    trades.forEach(t=>{
-      const a = pos[t.producer], b = pos[t.consumer];
-      const w = 1 + (Number(t.energyWh)/ (maxFlow||1)) * 4;
-      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
-      svg += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#49C9B0" stroke-width="${w}" opacity="0.55" marker-end="url(#arrow)"><title>${short(t.producer)} → ${short(t.consumer)}: ${fmtKwh(t.energyWh)} kWh, ${fmtToken(t.amountPaid)} Token</title></line>`;
-    });
-    involved.forEach(addr=>{
-      const p = pos[addr];
-      svg += `<a href="https://sepolia.etherscan.io/address/${addr}" target="_blank" rel="noopener">
-        <circle cx="${p.x}" cy="${p.y}" r="16" fill="#1B2329" stroke="#2A343D" stroke-width="1"/>
-        <text x="${p.x}" y="${p.y+3}" text-anchor="middle" font-size="8" fill="#E7EDEF" font-family="IBM Plex Mono, monospace">${addr.slice(2,6)}</text>
-      </a>`;
-    });
-    svg += `</svg>`;
-    holder.innerHTML = svg;
-  }
-}
-
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Selbstversorgung & Saldo-Ledger
-   ════════════════════════════════════════════════════════════════ */
-async function renderLedger(body, meta){
   const stats = {};
-  state.households.forEach(a=> stats[norm(a)] = { produced:0n, consumed:0n, bought:0n, sold:0n, earned:0n, paid:0n });
-
-  let unmatchedMeter = 0, unmatchedTrade = 0;
-  state.logs.meter.forEach(m=>{
-    const k = norm(m.household);
-    if(!stats[k]){ unmatchedMeter++; return; }
-    stats[k].produced += BigInt(m.production);
-    stats[k].consumed += BigInt(m.consumption);
-  });
-  state.logs.trade.forEach(t=>{
-    const p = norm(t.producer), c = norm(t.consumer);
-    let matched = false;
-    if(stats[p]){ stats[p].sold += BigInt(t.energyWh); stats[p].earned += BigInt(t.amountPaid); matched = true; }
-    if(stats[c]){ stats[c].bought += BigInt(t.energyWh); stats[c].paid += BigInt(t.amountPaid); matched = true; }
-    if(!matched) unmatchedTrade++;
-  });
-  if(unmatchedMeter || unmatchedTrade){
-    console.warn(`Ledger: ${unmatchedMeter} Meter-Events und ${unmatchedTrade} Trade-Events passen zu keinem aktuell registrierten Haushalt (evtl. alte Contract-Adresse oder Haushalt seither entfernt).`);
-  }
+  state.households.forEach(a=> stats[norm(a)] = {produced:0n, consumed:0n, earned:0n, paid:0n});
+  state.logs.meter.forEach(m=>{ const k=norm(m.household); if(!stats[k]) return; stats[k].produced+=BigInt(m.production); stats[k].consumed+=BigInt(m.consumption); });
+  state.logs.trade.forEach(t=>{ const p=norm(t.producer), c=norm(t.consumer); if(stats[p]){stats[p].earned+=BigInt(t.amountPaid);} if(stats[c]){stats[c].paid+=BigInt(t.amountPaid);} });
 
   const rows = Object.entries(stats).map(([addr,s])=>{
-    // Selbstversorgung = Anteil des Verbrauchs, der durch EIGENE Produktion gedeckt ist —
-    // unabhängig davon, ob der Markt einen etwaigen Rest-Bedarf erfolgreich zugekauft hat.
-    // produced=0 -> zwingend 0%. produced>=consumed -> 100% (gedeckelt, kein Export-Bonus).
-    const selfSuff = s.consumed>0n
-      ? (Number(s.produced < s.consumed ? s.produced : s.consumed) / Number(s.consumed)) * 100
-      : (s.produced>0n ? 100 : 0);
-    const saldo = Number(s.earned - s.paid)/1e6;
-    return `<tr>
-      <td class="addr">${addrLink(addr)}</td>
-      <td>${fmtKwh(s.produced)}</td>
-      <td>${fmtKwh(s.consumed)}</td>
-      <td>${selfSuff.toFixed(0)}%</td>
-      <td style="color:${saldo>=0?'var(--produce)':'var(--warn)'}">${saldo>=0?'+':''}${saldo.toLocaleString('de-CH',{maximumFractionDigits:3})}</td>
-    </tr>`;
+    const selfSuff = s.consumed>0n ? (Number(s.produced<s.consumed?s.produced:s.consumed)/Number(s.consumed))*100 : (s.produced>0n?100:0);
+    const saldo = Number(s.earned-s.paid)/1e6;
+    return `<tr><td class="addr">${addrLink(addr)}</td><td>${fmtKwh(s.produced)}</td><td>${fmtKwh(s.consumed)}</td><td>${selfSuff.toFixed(0)}%</td>
+      <td style="color:${saldo>=0?'var(--produce)':'var(--warn)'}">${saldo>=0?'+':''}${saldo.toFixed(3)}</td></tr>`;
   }).join('');
-
-  meta.textContent = 'Aus Meter- & Trade-Events berechnet'
-    + (unmatchedTrade ? ` · ⚠️ ${unmatchedTrade} Trade-Event(s) ohne passenden Haushalt (Konsole prüfen)` : '');
-  body.innerHTML = state.households.length===0 ? '<div class="empty">Keine Haushalte.</div>' : `
-    <div class="scroll-y"><table><thead><tr>
-      <th>Haushalt</th><th>Produziert (kWh)</th><th>Verbraucht (kWh)</th><th>Selbstvers.</th><th>Saldo (Token)</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
+  box.innerHTML = `<h2>${icon('chart')} Selbstversorgung & Saldo</h2><div class="scroll-y"><table><thead><tr><th>Haushalt</th><th>Produziert</th><th>Verbraucht</th><th>Selbstvers.</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Zahlungsübersicht
-   ════════════════════════════════════════════════════════════════ */
-async function renderPayments(body, meta){
-  const windowSize = parseInt(document.getElementById('cfgSlotWindow').value || '15', 10) || 15;
-  const allSlots = [...new Set(state.logs.slotSettled.map(s=>s.slot))].sort((a,b)=>a-b);
-  const visibleSlots = allSlots.slice(-windowSize); // nur die letzten N Slots, ältere fallen weg
-  const visibleSet = new Set(visibleSlots);
+async function renderPaymentsBox(scope){
+  const isAll = scope === 'all';
+  const box = document.getElementById('paymentsBox');
+  const trades = state.logs.trade.filter(t=> isAll || norm(t.producer)===norm(scope) || norm(t.consumer)===norm(scope))
+    .sort((a,b)=>b.blockNumber-a.blockNumber).slice(0,60);
+  box.innerHTML = trades.length===0 ? '<div class="empty">Keine Trades.</div>' : `
+    <div class="scroll-y"><table><thead><tr><th>Slot</th><th>Zeit</th><th>Produzent</th><th>Konsument</th><th>kWh</th><th>Token</th></tr></thead>
+    <tbody>${trades.map(t=>`<tr><td>${t.slot}</td><td>${simTimeLabel(blockTime(t.blockNumber))}</td><td class="addr">${addrLink(t.producer)}</td><td class="addr">${addrLink(t.consumer)}</td><td>${fmtKwh(t.energyWh)}</td><td>${fmtToken(t.amountPaid)}</td></tr>`).join('')}</tbody></table></div>`;
+}
 
-  const bySlot = {};
-  state.logs.slotSettled.forEach(s=>{ if(visibleSet.has(s.slot)) bySlot[s.slot] = s; });
-  const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
-
-  const trades = state.logs.trade
-    .filter(t=>visibleSet.has(t.slot))
-    .sort((a,b)=> b.blockNumber - a.blockNumber);
-
-  meta.textContent = `${state.logs.trade.length} Trades gesamt · zeige letzte ${visibleSlots.length} von ${allSlots.length} Slots`;
-  body.innerHTML = `
-    <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px;">
-      <div><canvas id="paymentsChart" height="140"></canvas></div>
-      <div class="scroll-y"><table><thead><tr><th>Slot</th><th>Zeit</th><th>Produzent</th><th>Konsument</th><th>kWh</th><th>Token</th></tr></thead>
-        <tbody>${trades.map(t=>`<tr><td>${t.slot}</td><td>${fmtTime(blockTime(t.blockNumber))||'–'}</td><td class="addr">${addrLink(t.producer)}</td><td class="addr">${addrLink(t.consumer)}</td><td>${fmtKwh(t.energyWh)}</td><td>${fmtToken(t.amountPaid)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Keine Trades.</td></tr>'}</tbody>
-      </table></div>
+async function renderApproveBox(){
+  const box = document.getElementById('approveBox');
+  box.innerHTML = `
+    <p style="font-size:11.5px;color:var(--text-dim);margin:0 0 8px;">Erlaubt dem P2PEnergyMarket, Tokens von deinem Konto abzubuchen (nötig für den Handel).</p>
+    <div class="admin-block" style="border-top:none;padding-top:0;">
+      <div class="row"><input class="full" id="stablecoinInput" placeholder="0x... (Stablecoin-Adresse)" value="0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"><button id="btnApprove">Freigabe erteilen</button></div>
+      <div id="approveResult"></div>
     </div>`;
-
-  if(slots.length===0) return;
-  try{
-    if(state.charts.payments) state.charts.payments.destroy();
-    state.charts.payments = new Chart(document.getElementById('paymentsChart'), {
-      type:'bar',
-      data:{ labels: slots.map(s=>'Slot '+s), datasets:[
-        { label:'Token bezahlt', data: slots.map(s=>Number(bySlot[s].totalPaid)/1e6), backgroundColor:'#E2A339' },
-      ]},
-      options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}}}, scales:{
-        x:{ticks:{color:'#5B666D'},grid:{display:false}}, y:{ticks:{color:'#5B666D'},grid:{color:'rgba(255,255,255,.04)'}}
-      }}
-    });
-  }catch(err){
-    console.error('payments chart', err);
-    const holder = document.getElementById('paymentsChart');
-    if(holder) holder.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden — Tabelle rechts bleibt trotzdem gültig.'}));
-  }
+  document.getElementById('btnApprove').addEventListener('click', ()=>{
+    const addr = document.getElementById('stablecoinInput').value.trim();
+    if(!addr) return;
+    const stablecoin = new ethers.Contract(addr, ERC20_ABI, state.signer);
+    runTx(stablecoin.approve(state.market.target, BIG_NUMBER), 'approveResult');
+  });
 }
 
 /* ════════════════════════════════════════════════════════════════
-   MODUL: Oracle-Health
+   MANAGEMENT PAGE (Owner)
    ════════════════════════════════════════════════════════════════ */
-async function renderOracleHealth(body, meta){
+async function renderManagementPage(el){
+  el.innerHTML = `
+    <div class="page-header"><h1>Verwaltung</h1><div class="sub">Owner-Funktionen</div></div>
+    <div class="section-row">
+      <div class="section"><h2>${icon('pulse')} Oracle-Health</h2><div id="mgmtOracleHealth"></div></div>
+      <div class="section"><h2>${icon('link')} Registrierungs-Abgleich</h2><div id="mgmtReconcile"></div></div>
+    </div>
+    <div class="section"><h2>${icon('home')} Registrierte Haushalte</h2><div id="mgmtHouseholds"></div></div>
+    <div class="section"><h2>${icon('tool')} Admin-Aktionen</h2><div id="mgmtAdmin"></div></div>
+  `;
+  try{ await renderOracleHealth(); }catch(e){ document.getElementById('mgmtOracleHealth').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  try{ await renderReconcile(); }catch(e){ document.getElementById('mgmtReconcile').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  try{ await renderHouseholdsList(); }catch(e){ document.getElementById('mgmtHouseholds').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  try{ await renderAdminPanel(); }catch(e){ document.getElementById('mgmtAdmin').innerHTML = `<div class="err">${e.message||e}</div>`; }
+}
+
+async function renderHouseholdsList(){
+  const box = document.getElementById('mgmtHouseholds');
+  if(state.households.length===0){ box.innerHTML = '<div class="empty">Keine Haushalte registriert.</div>'; return; }
+  box.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>Status</th><th></th></tr></thead><tbody>
+    ${state.households.map(a=>`<tr><td class="addr">${addrLink(a)}</td><td><span class="tag yes">registriert</span></td><td><a href="#" data-view="${a}" style="font-size:11px;">Ansehen →</a></td></tr>`).join('')}
+  </tbody></table></div>`;
+  box.querySelectorAll('a[data-view]').forEach(link=>{
+    link.addEventListener('click', (e)=>{ e.preventDefault(); state.page='overview'; state.viewAddress=link.dataset.view; renderSidebar(); renderMain(); });
+  });
+}
+
+async function renderOracleHealth(){
+  const box = document.getElementById('mgmtOracleHealth');
   const currentSlot = Number(await state.oracle.getCurrentSlot());
   const meterLogs = state.logs.meter;
-  meta.textContent = 'Chain-Zeit vs. letzte Oracle-Schreibung';
-
-  if(meterLogs.length===0){
-    body.innerHTML = `<div class="stat-row"><div class="stat"><div class="v">${currentSlot}</div><div class="l">Aktueller Slot</div></div></div><div class="empty" style="margin-top:8px;">Noch keine MeterUpdated-Events — oracle_writer.py läuft evtl. nicht.</div>`;
-    return;
-  }
-  const last = meterLogs.reduce((a,b)=> a.blockNumber>b.blockNumber ? a : b);
-  const [lastBlock, latestBlock] = await Promise.all([
-    state.provider.getBlock(last.blockNumber),
-    state.provider.getBlock('latest')
-  ]);
+  if(meterLogs.length===0){ box.innerHTML = `<div class="stat-row"><div class="kpi-card"><div class="v">${currentSlot}</div><div class="l">Aktueller Slot</div></div></div><div class="empty">Keine MeterUpdated-Events.</div>`; return; }
+  const last = meterLogs.reduce((a,b)=>a.blockNumber>b.blockNumber?a:b);
+  const [lastBlock, latestBlock] = await Promise.all([state.provider.getBlock(last.blockNumber), state.provider.getBlock('latest')]);
   const secsSince = latestBlock.timestamp - lastBlock.timestamp;
   const slotGap = currentSlot - last.slot;
-
-  let statusLabel, statusClass;
-  if(slotGap<=2){ statusLabel='OK'; statusClass='ok'; }
-  else if(slotGap<=10){ statusLabel='VERZÖGERT'; statusClass='warn'; }
-  else { statusLabel='HÄNGT'; statusClass='warn'; }
-
-  body.innerHTML = `
-    <div class="stat-row">
-      <div class="stat"><div class="v">${currentSlot}</div><div class="l">Aktueller Slot (Chain-Zeit)</div></div>
-      <div class="stat"><div class="v">${last.slot}</div><div class="l">Letzter geschriebener Slot</div></div>
-      <div class="stat"><div class="v ${statusClass}">${statusLabel}</div><div class="l">Gap: ${slotGap} Slot(s)</div></div>
-      <div class="stat"><div class="v">${secsSince}s</div><div class="l">Seit letztem Update</div></div>
-    </div>`;
+  const statusClass = slotGap<=2?'ok':'warn';
+  const statusLabel = slotGap<=2?'OK':slotGap<=10?'VERZÖGERT':'HÄNGT';
+  box.innerHTML = `<div class="kpi-row">
+    <div class="kpi-card"><div class="v">${currentSlot}</div><div class="l">Aktueller Slot</div></div>
+    <div class="kpi-card"><div class="v">${last.slot}</div><div class="l">Letzter geschriebener Slot</div></div>
+    <div class="kpi-card"><div class="v ${statusClass}">${statusLabel}</div><div class="l">Gap: ${slotGap}</div></div>
+    <div class="kpi-card"><div class="v">${secsSince}s</div><div class="l">Seit letztem Update</div></div>
+  </div>`;
 }
 
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Registrierungs-Abgleich
-   ════════════════════════════════════════════════════════════════ */
-async function renderReconcile(body, meta){
+async function renderReconcile(){
+  const box = document.getElementById('mgmtReconcile');
   const oracleSet = new Set(state.logs.oracleRegistered.map(a=>norm(a)));
   const marketSet = new Set(state.households.map(a=>norm(a)));
   const batterySet = new Set(state.batteryHouseholds.map(a=>norm(a)));
   const all = [...new Set([...oracleSet, ...marketSet, ...batterySet])];
-  meta.textContent = `${all.length} Adresse(n) beobachtet`;
-
-  if(all.length===0){ body.innerHTML = '<div class="empty">Keine Registrierungen gefunden.</div>'; return; }
-
+  if(all.length===0){ box.innerHTML = '<div class="empty">Keine Registrierungen.</div>'; return; }
   const showBattery = !!state.battery;
   const rows = all.map(a=>{
-    const inO = oracleSet.has(a), inM = marketSet.has(a), inB = batterySet.has(a);
-    const mismatch = inO !== inM; // Battery ist optional pro Haushalt -> fehlendes BatteryManager-Flag zählt bewusst nicht als Mismatch
-    return `<tr style="${mismatch?'background:rgba(225,87,63,.06)':''}">
-      <td class="addr">${addrLink(a)}</td>
+    const inO=oracleSet.has(a), inM=marketSet.has(a), inB=batterySet.has(a);
+    const mismatch = inO!==inM;
+    return `<tr style="${mismatch?'background:rgba(225,87,63,.06)':''}"><td class="addr">${addrLink(a)}</td>
       <td><span class="tag ${inO?'yes':'no'}">${inO?'ja':'nein'}</span></td>
       <td><span class="tag ${inM?'yes':'no'}">${inM?'ja':'nein'}</span></td>
-      ${showBattery ? `<td><span class="tag ${inB?'yes':'no'}">${inB?'ja':'nein'}</span></td>` : ''}
-    </tr>`;
+      ${showBattery?`<td><span class="tag ${inB?'yes':'no'}">${inB?'ja':'nein'}</span></td>`:''}</tr>`;
   }).join('');
-  body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>In Oracle</th><th>In Market</th>${showBattery?'<th>In BatteryManager</th>':''}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  box.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>Oracle</th><th>Market</th>${showBattery?'<th>Battery</th>':''}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-/* ════════════════════════════════════════════════════════════════
-   MODUL: Admin-Mini-Panel
-   ════════════════════════════════════════════════════════════════ */
-async function renderAdmin(body, meta){
-  if(!state.marketWithSigner){
-    meta.textContent = '';
-    body.innerHTML = '<div class="empty">Wallet verbinden, um Admin-Aktionen auszuführen.</div>';
-    return;
-  }
-  const owner = await state.market.owner();
-  const isOwner = owner.toLowerCase() === state.walletAddress.toLowerCase();
-  meta.textContent = `Owner: ${short(owner)} ${isOwner ? '(du)' : '(nicht du)'}`;
+async function renderAdminPanel(){
+  const box = document.getElementById('mgmtAdmin');
+  if(!state.marketWithSigner){ box.innerHTML = '<div class="empty">Nicht verbunden.</div>'; return; }
 
-  body.innerHTML = `
+  box.innerHTML = `
     <div class="admin-block">
-      <p>Oracle Wallet im Oracle Storage autorisieren. Wird benötigt, um Haushalte im Oracle Storage zu registrieren. Nur Owner.</p>
-      <div class="row"><input id="authInput" placeholder="0x... (Oracle Wallet)"><button id="btnAuth">Autorisieren</button></div>
-      <div id="authResult"></div>
+      <p>Oracle-Wallet im OracleStorage autorisieren.</p>
+      <div class="row"><input id="authOracleInput" placeholder="0x... (Oracle-Wallet)" ${state.oracleWithSigner?'':'disabled'}><button id="btnAuthOracle" ${state.oracleWithSigner?'':'disabled'}>Autorisieren</button></div>
+      <div id="authOracleResult"></div>
     </div>
     <div class="admin-block">
-      <p>Haushalt im Market registrieren. Nur Owner, und Adresse muss bereits im Oracle registriert sein.</p>
-      <div class="row"><input id="regInput" placeholder="0x... (Haushalt Wallet)"><button id="btnReg">Registrieren</button></div>
+      <p>Haushalt im Market registrieren.</p>
+      <div class="row"><input id="regInput" placeholder="0x... (Haushalt)"><button id="btnReg">Registrieren</button></div>
       <div id="regResult"></div>
     </div>
     <div class="admin-block">
-      <p>Haushalt beim BatteryManager registrieren (analog zur Market-Registrierung). Adresse des BatteryManager-Contracts oben im Config-Feld eintragen.</p>
-      <div class="row"><input id="regBmHhInput" placeholder="0x... (Haushalt Wallet)"><button id="btnRegBmHh" ${state.batteryWithSigner?'':'disabled'}>Registrieren</button></div>
-      ${state.batteryWithSigner ? '' : '<p style="margin-top:6px;">⚠️ BatteryManager-Adresse oben im Config-Bereich eintragen und neu verbinden.</p>'}
+      <p>Haushalt beim BatteryManager registrieren.</p>
+      <div class="row"><input id="regBmHhInput" placeholder="0x... (Haushalt)" ${state.batteryWithSigner?'':'disabled'}><button id="btnRegBmHh" ${state.batteryWithSigner?'':'disabled'}>Registrieren</button></div>
       <div id="regBmHhResult"></div>
     </div>
     <div class="admin-block">
-      <p>Battery Manager registrieren. Nur Owner.</p>
-      <div class="row"><input id="regBatInput" placeholder="0x... (BatteryManager Contract)"><button id="btnRegBat">Registrieren</button></div>
+      <p>BatteryManager-Contract im Market eintragen.</p>
+      <div class="row"><input id="regBatInput" placeholder="0x... (BatteryManager)"><button id="btnRegBat">Registrieren</button></div>
       <div id="regBatResult"></div>
     </div>
     <div class="admin-block">
-      <p>Incentive Controller registrieren. Nur Owner.</p>
-      <div class="row"><input id="regICInput" placeholder="0x... (IncentiveController Contract)"><button id="btnRegIC">Registrieren</button></div>
+      <p>IncentiveController-Contract im Market eintragen.</p>
+      <div class="row"><input id="regICInput" placeholder="0x... (IncentiveController)" value="0x18eB3E472980E9210C0ad6d42aB93dF98f083310"><button id="btnRegIC">Registrieren</button></div>
       <div id="regICResult"></div>
     </div>
     <div class="admin-block">
-      <p>Token-Allowance an P2PEnergyMarket erteilen (unbegrenzt, 2²⁵⁶-1) — nötig, damit settleSlot() Tokens von <b>deinem</b> Konto abbuchen kann. Wird mit dem verbundenen Wallet signiert; jeder Haushalt muss dies für sein eigenes Konto einmal selbst tun.</p>
-      <div class="row"><input id="stablecoinInput" placeholder="0x... (Stablecoin-Contract-Adresse)" value="0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"><button id="btnToken">Unbegrenzte Allowance erteilen</button></div>
-      <div id="tokenResult"></div>
+      <p>Aktuellen Slot abrechnen (kein Owner nötig).</p>
+      <div class="row"><button id="btnSettle">Slot abrechnen</button></div>
+      <div id="settleResult"></div>
+    </div>
+    <div class="admin-block">
+      <p>Energiepreis pro kWh setzen (Token-Einheiten, 6 Decimals).</p>
+      <div class="row"><input id="priceInput" type="number" placeholder="z.B. 100000"><button id="btnPrice">Setzen</button></div>
+      <div id="priceResult"></div>
     </div>`;
 
-  document.getElementById('btnAuth').addEventListener('click', ()=>{
-    const v = document.getElementById('authInput').value.trim();
-    if(!v) return;
-    runTx(state.oracleWithSigner.authorizeOracle(v), 'authResult');
-  });
-  document.getElementById('btnReg').addEventListener('click', ()=>{
-    const v = document.getElementById('regInput').value.trim();
-    if(!v) return;
-    runTx(state.marketWithSigner.registerHousehold(v), 'regResult');
-  });
-  document.getElementById('btnRegBat').addEventListener('click', ()=>{
-    const v = document.getElementById('regBatInput').value.trim();
-    if(!v) return;
-    runTx(state.marketWithSigner.setBatteryManager(v), 'regBatResult');
-  });
-  document.getElementById('btnRegBmHh').addEventListener('click', ()=>{
-    const v = document.getElementById('regBmHhInput').value.trim();
-    if(!v || !state.batteryWithSigner) return;
-    runTx(state.batteryWithSigner.addHousehold(v), 'regBmHhResult');
-  });
-  document.getElementById('btnRegIC').addEventListener('click', ()=>{
-    const v = document.getElementById('regICInput').value.trim();
-    if(!v) return;
-    runTx(state.marketWithSigner.setIncentiveController(v), 'regICResult');
-  });
-  document.getElementById('btnToken').addEventListener('click', ()=>{
-    const stablecoinAddr = document.getElementById('stablecoinInput').value.trim();
-    if(!stablecoinAddr) return;
-    const marketAddr = document.getElementById('cfgMarket').value.trim();
-    const stablecoin = new ethers.Contract(stablecoinAddr, ERC20_ABI, state.signer);
-    runTx(stablecoin.approve(marketAddr, BIG_NUMBER), 'tokenResult');
-  });
+  document.getElementById('btnAuthOracle').addEventListener('click', ()=>{ const v=document.getElementById('authOracleInput').value.trim(); if(v) runTx(state.oracleWithSigner.authorizeOracle(v), 'authOracleResult'); });
+  document.getElementById('btnReg').addEventListener('click', ()=>{ const v=document.getElementById('regInput').value.trim(); if(v) runTx(state.marketWithSigner.registerHousehold(v), 'regResult'); });
+  document.getElementById('btnRegBmHh').addEventListener('click', ()=>{ const v=document.getElementById('regBmHhInput').value.trim(); if(v && state.batteryWithSigner) runTx(state.batteryWithSigner.addHousehold(v), 'regBmHhResult'); });
+  document.getElementById('btnRegBat').addEventListener('click', ()=>{ const v=document.getElementById('regBatInput').value.trim(); if(v) runTx(state.marketWithSigner.setBatteryManager(v), 'regBatResult'); });
+  document.getElementById('btnRegIC').addEventListener('click', ()=>{ const v=document.getElementById('regICInput').value.trim(); if(v) runTx(state.marketWithSigner.setIncentiveController(v), 'regICResult'); });
+  document.getElementById('btnSettle').addEventListener('click', ()=> runTx(state.marketWithSigner.settleSlot(), 'settleResult'));
+  document.getElementById('btnPrice').addEventListener('click', ()=>{ const v=document.getElementById('priceInput').value.trim(); if(v) runTx(state.marketWithSigner.setEnergyPrice(BigInt(v)), 'priceResult'); });
+}
 
-  async function runTx(txPromise, resultId){
-    const el = document.getElementById(resultId);
-    el.innerHTML = '<div class="empty">Transaktion wird gesendet…</div>';
-    try{
-      const tx = await txPromise;
-      el.innerHTML = `<div class="empty">Warte auf Bestätigung… <a class="addr-link" href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" rel="noopener">${short(tx.hash)}</a></div>`;
-      const receipt = await tx.wait();
-      el.innerHTML = `<div class="ok-msg">Erfolgreich · Block ${receipt.blockNumber} · <a class="addr-link" href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" rel="noopener">${short(tx.hash)}</a></div>`;
-      await refreshAll();
-    }catch(err){
-      console.error(err);
-      el.innerHTML = `<div class="err">${err.shortMessage || err.reason || err.message || err}</div>`;
-    }
+/* ════════════════════════════════════════════════════════════════
+   TX HELPER
+   ════════════════════════════════════════════════════════════════ */
+async function runTx(txPromise, resultId){
+  const el = document.getElementById(resultId);
+  el.innerHTML = '<div class="empty">Transaktion wird gesendet…</div>';
+  try{
+    const tx = await txPromise;
+    el.innerHTML = `<div class="empty">Warte auf Bestätigung… <a class="addr-link" href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" rel="noopener">${short(tx.hash)}</a></div>`;
+    const receipt = await tx.wait();
+    el.innerHTML = `<div class="ok-msg">Erfolgreich · Block ${receipt.blockNumber} · <a class="addr-link" href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" rel="noopener">${short(tx.hash)}</a></div>`;
+    await refreshAll();
+  }catch(err){
+    console.error(err);
+    el.innerHTML = `<div class="err">${err.shortMessage || err.reason || err.message || err}</div>`;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   INIT
+   ════════════════════════════════════════════════════════════════ */
+renderSidebar();
+renderMain();
 </script>
 </body>
 </html>
