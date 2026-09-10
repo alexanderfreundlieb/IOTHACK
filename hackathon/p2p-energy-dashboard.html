@@ -41,7 +41,7 @@
   .status-dot.warn{background:var(--warn);}
 
   /* ── Config bar ───────────────────────────────────────── */
-  .config{display:grid;grid-template-columns:1.4fr 1fr 1fr .7fr auto auto;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px;margin-bottom:14px;align-items:end;}
+  .config{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr .6fr auto auto;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:12px;margin-bottom:14px;align-items:end;}
   .config label{display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;}
   .config input{width:100%;background:var(--panel-alt);border:1px solid var(--border);color:var(--text);padding:7px 8px;border-radius:3px;font-family:var(--font-mono);font-size:12.5px;}
   .config input:focus{outline:1px solid var(--ops);}
@@ -113,6 +113,31 @@
 
   canvas{max-width:100%;}
   .scroll-y{max-height:320px;overflow-y:auto;}
+
+  .addr-link{color:var(--text);text-decoration:none;border-bottom:1px dotted var(--text-faint);}
+  .addr-link:hover{color:var(--ops);border-bottom-color:var(--ops);}
+
+  /* ── Batterie-Visual ─────────────────────────────────── */
+  .battery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;}
+  .battery-card{background:var(--panel-alt);border:1px solid var(--border);border-radius:4px;padding:10px;text-align:center;}
+  .battery-card .addr-link{font-size:11px;display:block;margin-bottom:8px;}
+  .battery-shell{position:relative;width:56px;height:104px;margin:0 auto 8px;border:2px solid var(--text-dim);border-radius:5px;overflow:hidden;background:#0B1116;}
+  .battery-shell::before{content:'';position:absolute;top:-6px;left:50%;transform:translateX(-50%);width:20px;height:6px;background:var(--text-dim);border-radius:2px 2px 0 0;}
+  .battery-fill{position:absolute;bottom:0;left:0;width:100%;transition:height .6s ease, background .6s ease;}
+  .battery-fill.lvl-low{background:linear-gradient(180deg,#ff8a75,var(--warn));}
+  .battery-fill.lvl-mid{background:linear-gradient(180deg,#ffd27a,var(--consume));}
+  .battery-fill.lvl-high{background:linear-gradient(180deg,#7ee9d6,var(--produce));}
+  .battery-fill.charging{animation:pulseFill 1.4s ease-in-out infinite;}
+  @keyframes pulseFill{ 0%,100%{filter:brightness(1);} 50%{filter:brightness(1.35);} }
+  .battery-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:13px;font-weight:600;color:#0B1116;mix-blend-mode:screen;text-shadow:0 0 3px rgba(0,0,0,.4);}
+  .battery-bolt{position:absolute;top:6px;left:50%;transform:translateX(-50%);width:14px;height:14px;opacity:0;}
+  .battery-bolt.show-charge{opacity:1;animation:boltFlicker 1.1s ease-in-out infinite;}
+  .battery-bolt.show-discharge{opacity:1;animation:boltFlicker 1.1s ease-in-out infinite;}
+  @keyframes boltFlicker{ 0%,100%{opacity:.35;} 50%{opacity:1;} }
+  .battery-status-label{font-size:10.5px;color:var(--text-dim);}
+  .battery-status-label.charge{color:var(--produce);}
+  .battery-status-label.discharge{color:var(--consume);}
+  .battery-meta-row{display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:4px;font-family:var(--font-mono);}
 </style>
 </head>
 <body>
@@ -141,6 +166,10 @@
     <input id="cfgMarket" placeholder="0x...">
   </div>
   <div>
+    <label>BatteryManager Adresse (optional)</label>
+    <input id="cfgBattery" placeholder="0x... (Phase 2)">
+  </div>
+  <div>
     <label>Ab Block</label>
     <input id="cfgFromBlock" placeholder="0" value="11661170">
   </div>
@@ -150,6 +179,8 @@
 
 <div class="toolbar">
   <button id="btnRefresh" disabled>↻ Alle Module aktualisieren</button>
+  <div class="sep"></div>
+  <label style="display:flex;align-items:center;gap:6px;">Slots in Zahlungsübersicht: <input type="number" id="cfgSlotWindow" value="15" min="1" max="500"></label>
   <div class="sep"></div>
   <span id="lastFetchInfo">Noch keine Daten geladen.</span>
 </div>
@@ -169,7 +200,8 @@ const ORACLE_ABI = [
   "function isHouseholdRegistered(address) view returns (bool)",
   "function startTimestamp() view returns (uint256)",
   "event HouseholdRegistered(address indexed household)",
-  "event MeterUpdated(address indexed household, uint256 slot, uint256 consumption, uint256 production)"
+  "event MeterUpdated(address indexed household, uint256 slot, uint256 consumption, uint256 production)",
+  "event BatteryUpdated(address indexed household, uint256 slot, uint256 soc)"
 ];
 
 const MARKET_ABI = [
@@ -186,6 +218,30 @@ const MARKET_ABI = [
   "event HouseholdRegistered(address indexed household)",
   "event EnergyTraded(address indexed producer, address indexed consumer, uint256 energyWh, uint256 amountPaid, uint256 slot)",
   "event SlotSettled(uint256 indexed slot, uint256 totalEnergyTraded, uint256 totalPaid)"
+];
+
+// BatteryManager (Phase 2) — nur Funktionen, die per Testdatei bzw. der
+// P2PEnergyMarket-Integration bestätigt sind (isManaged() wird dort direkt
+// aufgerufen; addHousehold()/getBatteryStatus()/getManagedHouseholds()/
+// totalChargedWh()/totalDischargedWh() aus BatteryManagerTest.t.sol).
+// decideAction()/getLastDecision()/previewAction() bewusst NICHT eingebunden,
+// solange Action-Enum-Reihenfolge & Decision-Struct nicht aus dem echten
+// Contract/Interface bestätigt sind.
+const BATTERY_ABI = [
+  "function addHousehold(address)",
+  "function isManaged(address) view returns (bool)",
+  "function getManagedHouseholds() view returns (address[])",
+  "function getBatteryStatus(address) view returns (uint256 soc, uint256 capacity, uint256 reserveSoc, uint256 charged, uint256 discharged)",
+  "function totalChargedWh(address) view returns (uint256)",
+  "function totalDischargedWh(address) view returns (uint256)",
+  "function MAX_SOC() view returns (uint256)",
+  "function RESERVE_SOC_CLOUDY() view returns (uint256)",
+  // previewAction() ist view (gratis, keine Tx) und liefert einen Klartext-Grund
+  // ("store PV surplus", "battery covers deficit", ...) direkt aus _evaluate().
+  // Der Grund macht das Action-Enum fürs Dashboard überflüssig: Charge/Discharge
+  // wird stattdessen aus dem Vorzeichen von netto (Produktion-Verbrauch) UND
+  // amountWh>0 abgeleitet — beides bereits vorhandene, sicher interpretierbare Werte.
+  "function previewAction(address) view returns (uint8 action, uint256 amountWh, string reason)"
 ];
 
 // Minimal ERC-20 ABI für den Stablecoin — nur was für die Allowance nötig ist.
@@ -205,18 +261,24 @@ const state = {
   provider: null,
   oracle: null,
   market: null,
+  battery: null,          // BatteryManager read contract, null falls nicht konfiguriert
   signer: null,
   marketWithSigner: null,
+  batteryWithSigner: null,
   walletAddress: null,
   connected: false,
   logs: null,       // cached event logs, shared across modules
   households: [],   // addresses from market.getAllHouseholds()
+  batteryHouseholds: [], // addresses from battery.getManagedHouseholds()
+  blockTimestamps: {}, // blockNumber -> unix seconds, on-demand befüllt
   charts: {}        // Chart.js instances, keyed by canvas id, so we can destroy/recreate on refresh
 };
 
 function short(addr){ return addr ? addr.slice(0,6)+"…"+addr.slice(-4) : "–"; }
+function addrLink(addr){ return addr ? `<a class="addr-link" href="https://sepolia.etherscan.io/address/${addr}" target="_blank" rel="noopener">${short(addr)}</a>` : "–"; }
 function fmtToken(units){ return (Number(units) / 1e6).toLocaleString('de-CH',{maximumFractionDigits:4}); }
 function fmtKwh(wh){ return (Number(wh) / 1000).toLocaleString('de-CH',{maximumFractionDigits:3}); }
+function fmtTime(ts){ return ts ? new Date(Number(ts)*1000).toLocaleString('de-CH',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : ''; }
 // Kanonisiert eine Adresse (Checksum-Format), damit Vergleiche/Keys nie an Gross-/Kleinschreibung scheitern.
 function norm(addr){ try{ return ethers.getAddress(addr); }catch(e){ return addr; } }
 
@@ -229,6 +291,8 @@ function norm(addr){ try{ return ethers.getAddress(addr); }catch(e){ return addr
 const MODULES = [
   { id:'households',   name:'Haushalte',                 cat:'flow',    span:4, enabled:true,  render: renderHouseholds },
   { id:'timeline',      name:'Verbrauch & Produktion',     cat:'flow',    span:8, enabled:true,  render: renderTimeline },
+  { id:'battery',       name:'Batterie-Status',            cat:'flow',    span:7, enabled:true,  render: renderBatteryStatus },
+  { id:'batteryHistory',name:'Batterie-Verlauf (SoC)',      cat:'flow',    span:5, enabled:true,  render: renderBatteryHistory },
   { id:'network',       name:'Trade-Netzwerk pro Slot',    cat:'flow',    span:6, enabled:true,  render: renderNetworkGraph },
   { id:'ledger',        name:'Selbstversorgung & Saldo',   cat:'finance', span:6, enabled:true,  render: renderLedger },
   { id:'payments',      name:'Zahlungsübersicht',          cat:'finance', span:12,enabled:true,  render: renderPayments },
@@ -279,6 +343,7 @@ document.getElementById('btnConnect').addEventListener('click', async ()=>{
   const rpc = document.getElementById('cfgRpc').value.trim();
   const oracleAddr = document.getElementById('cfgOracle').value.trim();
   const marketAddr = document.getElementById('cfgMarket').value.trim();
+  const batteryAddr = document.getElementById('cfgBattery').value.trim();
   if(!rpc || !oracleAddr || !marketAddr){
     alert('Bitte RPC URL, OracleStorage- und P2PEnergyMarket-Adresse ausfüllen.');
     return;
@@ -288,6 +353,7 @@ document.getElementById('btnConnect').addEventListener('click', async ()=>{
     await state.provider.getBlockNumber(); // sanity check
     state.oracle = new ethers.Contract(oracleAddr, ORACLE_ABI, state.provider);
     state.market = new ethers.Contract(marketAddr, MARKET_ABI, state.provider);
+    state.battery = batteryAddr ? new ethers.Contract(batteryAddr, BATTERY_ABI, state.provider) : null;
     state.connected = true;
     document.getElementById('connDot').className = 'status-dot on';
     document.getElementById('connText').textContent = 'Verbunden (read-only)';
@@ -319,6 +385,10 @@ document.getElementById('btnConnectWallet').addEventListener('click', async ()=>
     if(marketAddr){
       state.marketWithSigner = new ethers.Contract(marketAddr, MARKET_ABI, state.signer);
     }
+    const batteryAddr = document.getElementById('cfgBattery').value.trim();
+    if(batteryAddr){
+      state.batteryWithSigner = new ethers.Contract(batteryAddr, BATTERY_ABI, state.signer);
+    }
     const isSepolia = net.chainId === 11155111n;
     document.getElementById('walletDot').className = 'status-dot ' + (isSepolia ? 'on' : 'warn');
     document.getElementById('walletText').textContent =
@@ -333,6 +403,10 @@ document.getElementById('btnConnectWallet').addEventListener('click', async ()=>
 });
 
 document.getElementById('btnRefresh').addEventListener('click', refreshAll);
+document.getElementById('cfgSlotWindow').addEventListener('change', ()=>{
+  const mod = MODULES.find(m=>m.id==='payments');
+  if(mod.enabled && state.connected) safeRender(mod);
+});
 
 async function refreshAll(){
   const btn = document.getElementById('btnRefresh');
@@ -343,7 +417,7 @@ async function refreshAll(){
       if(m.enabled) await safeRender(m);
     }
     document.getElementById('lastFetchInfo').textContent =
-      `Zuletzt geladen: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} Haushalte · ${state.logs.meter.length} Meter-Events · ${state.logs.trade.length} Trade-Events · ${state.logs.slotSettled.length} abgerechnete Slots`;
+      `Zuletzt geladen: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} Haushalte · ${state.logs.meter.length} Meter-Events · ${state.logs.trade.length} Trade-Events · ${state.logs.slotSettled.length} abgerechnete Slots · ${state.logs.battery.length} Batterie-Events`;
   }finally{
     btn.disabled = false; btn.textContent = '↻ Alle Module aktualisieren';
   }
@@ -374,13 +448,16 @@ async function fetchAllLogs(){
   const toBlock = await state.provider.getBlockNumber();
 
   state.households = await state.market.getAllHouseholds();
+  state.batteryHouseholds = state.battery ? await state.battery.getManagedHouseholds() : [];
 
-  const [meterLogsRaw, tradeLogsRaw, slotSettledRaw, oracleRegRaw] = await Promise.all([
+  const queries = [
     queryFilterChunked(state.oracle, state.oracle.filters.MeterUpdated(), fromBlock, toBlock),
     queryFilterChunked(state.market, state.market.filters.EnergyTraded(), fromBlock, toBlock),
     queryFilterChunked(state.market, state.market.filters.SlotSettled(), fromBlock, toBlock),
     queryFilterChunked(state.oracle, state.oracle.filters.HouseholdRegistered(), fromBlock, toBlock),
-  ]);
+    queryFilterChunked(state.oracle, state.oracle.filters.BatteryUpdated(), fromBlock, toBlock),
+  ];
+  const [meterLogsRaw, tradeLogsRaw, slotSettledRaw, oracleRegRaw, batteryLogsRaw] = await Promise.all(queries);
 
   state.logs = {
     meter: meterLogsRaw.map(l=>({
@@ -398,8 +475,32 @@ async function fetchAllLogs(){
       totalPaid: l.args.totalPaid, blockNumber: l.blockNumber
     })),
     oracleRegistered: [...new Set(oracleRegRaw.map(l=>l.args.household))],
+    battery: batteryLogsRaw.map(l=>({
+      household: l.args.household, slot: Number(l.args.slot), soc: Number(l.args.soc),
+      blockNumber: l.blockNumber
+    })),
   };
+
+  await fetchBlockTimestamps();
 }
+
+// Holt Unix-Timestamps für alle Blöcke, die in den geladenen Logs vorkommen —
+// dedupliziert & gecacht, damit Timeline/Zahlungsübersicht echte Uhrzeiten
+// statt nur Slot-Nummern zeigen können. Auf eine sinnvolle Menge begrenzt,
+// damit ein grosser Blockbereich nicht hunderte einzelne RPC-Calls auslöst.
+async function fetchBlockTimestamps(){
+  const allBlocks = new Set([
+    ...state.logs.meter.map(l=>l.blockNumber),
+    ...state.logs.trade.map(l=>l.blockNumber),
+    ...state.logs.slotSettled.map(l=>l.blockNumber),
+    ...state.logs.battery.map(l=>l.blockNumber),
+  ]);
+  const toFetch = [...allBlocks].filter(b=> !(b in state.blockTimestamps));
+  const capped = toFetch.slice(-300); // neueste 300 unbekannte Blöcke, um RPC-Last zu begrenzen
+  const results = await Promise.all(capped.map(b=> state.provider.getBlock(b).catch(()=>null)));
+  results.forEach((blk,i)=>{ if(blk) state.blockTimestamps[capped[i]] = blk.timestamp; });
+}
+function blockTime(blockNumber){ return state.blockTimestamps[blockNumber] || null; }
 
 /* ════════════════════════════════════════════════════════════════
    MODUL: Haushalte
@@ -408,7 +509,7 @@ async function renderHouseholds(body, meta){
   const hs = state.households;
   meta.textContent = `${hs.length} im P2PEnergyMarket registriert`;
   if(hs.length===0){ body.innerHTML = '<div class="empty">Keine Haushalte registriert.</div>'; return; }
-  const rows = hs.map(a=>`<tr><td class="addr">${short(a)}</td><td><span class="tag yes">registriert</span></td></tr>`).join('');
+  const rows = hs.map(a=>`<tr><td class="addr">${addrLink(a)}</td><td><span class="tag yes">registriert</span></td></tr>`).join('');
   body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>Markt-Status</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -436,16 +537,18 @@ async function renderTimeline(body, meta){
 
   function drawTimeline(){
     const sel = document.getElementById('timelineHousehold').value;
-    const filtered = sel==='__all__' ? state.logs.meter : state.logs.meter.filter(m=>m.household.toLowerCase()===sel.toLowerCase());
+    const filtered = sel==='__all__' ? state.logs.meter : state.logs.meter.filter(m=>norm(m.household)===norm(sel));
     const bySlot = {};
     filtered.forEach(m=>{
-      if(!bySlot[m.slot]) bySlot[m.slot] = {c:0n,p:0n};
+      if(!bySlot[m.slot]) bySlot[m.slot] = {c:0n,p:0n,block:m.blockNumber};
       bySlot[m.slot].c += BigInt(m.consumption);
       bySlot[m.slot].p += BigInt(m.production);
+      bySlot[m.slot].block = Math.min(bySlot[m.slot].block, m.blockNumber);
     });
     const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
     const consumption = slots.map(s=>Number(bySlot[s].c)/1000);
     const production = slots.map(s=>Number(bySlot[s].p)/1000);
+    const times = slots.map(s=> blockTime(bySlot[s].block));
 
     const ctx = document.getElementById('timelineChart');
     if(slots.length===0){ ctx.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'Keine Meter-Daten im gewählten Blockbereich.'})); return; }
@@ -457,7 +560,10 @@ async function renderTimeline(body, meta){
           { label:'Verbrauch (kWh)', data:consumption, borderColor:'#E2A339', backgroundColor:'rgba(226,163,57,.12)', tension:.25, fill:true, pointRadius:2 },
           { label:'Produktion (kWh)', data:production, borderColor:'#49C9B0', backgroundColor:'rgba(73,201,176,.12)', tension:.25, fill:true, pointRadius:2 },
         ]},
-        options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}}}, scales:{
+        options:{ responsive:true, plugins:{
+          legend:{labels:{color:'#8B98A0'}},
+          tooltip:{ callbacks:{ afterTitle: (items)=>{ const t = times[items[0].dataIndex]; return t ? fmtTime(t) : ''; } } }
+        }, scales:{
           x:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
           y:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
         }}
@@ -465,6 +571,122 @@ async function renderTimeline(body, meta){
     }catch(err){
       console.error('timeline chart', err);
       ctx.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden — Daten liegen aber vor ('+slots.length+' Slots).'}));
+    }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Batterie-Status (live, animiert)
+   Nutzt battery.getBatteryStatus() — Signatur exakt aus der
+   mitgelieferten Testdatei bestätigt (soc, capacity, reserveSoc,
+   charged, discharged). Lade-/Entlade-Trend wird aus den letzten
+   zwei BatteryUpdated-Oracle-Events abgeleitet (steigender/fallender
+   SoC), nicht aus decideAction() — dessen Action-Enum-Reihenfolge
+   noch nicht bestätigt ist.
+   ════════════════════════════════════════════════════════════════ */
+async function renderBatteryStatus(body, meta){
+  if(!state.battery){
+    body.innerHTML = '<div class="empty">Kein BatteryManager konfiguriert (optionales Feld oben ausfüllen).</div>';
+    meta.textContent = '';
+    return;
+  }
+  const managed = state.batteryHouseholds;
+  meta.textContent = `${managed.length} beim BatteryManager registriert`;
+  if(managed.length===0){ body.innerHTML = '<div class="empty">Noch keine Haushalte beim BatteryManager registriert.</div>'; return; }
+
+  const [statuses, previews] = await Promise.all([
+    Promise.all(managed.map(a=> state.battery.getBatteryStatus(a).catch(()=>null))),
+    Promise.all(managed.map(a=> state.battery.previewAction(a).catch(()=>null))),
+  ]);
+
+  // Aktuelles Netto (Produktion-Verbrauch) je Haushalt aus dem neuesten Meter-Event —
+  // zusammen mit amountWh>0 aus previewAction() reicht das, um CHARGE/DISCHARGE
+  // eindeutig zu unterscheiden, ganz ohne die Action-Enum-Kodierung zu kennen:
+  // laut _evaluate() im Contract liefert netto>0 nie DISCHARGE und netto<0 nie CHARGE.
+  const lastNetto = {};
+  managed.forEach(addr=>{
+    const evs = state.logs.meter.filter(m=>norm(m.household)===norm(addr));
+    if(evs.length===0){ lastNetto[addr] = 0n; return; }
+    const last = evs.reduce((a,b)=> a.blockNumber>b.blockNumber?a:b);
+    lastNetto[addr] = BigInt(last.production) - BigInt(last.consumption);
+  });
+
+  const cards = managed.map((addr,i)=>{
+    const st = statuses[i];
+    const pv = previews[i];
+    if(!st) return `<div class="battery-card"><span class="addr-link">${addrLink(addr)}</span><div class="empty">Kein Status</div></div>`;
+    const soc = Number(st.soc);
+    const lvl = soc<20 ? 'lvl-low' : soc<60 ? 'lvl-mid' : 'lvl-high';
+
+    let trend = 'idle', reasonText = '';
+    if(pv && Number(pv.amountWh) > 0){
+      trend = lastNetto[addr] > 0n ? 'charge' : lastNetto[addr] < 0n ? 'discharge' : 'idle';
+      reasonText = pv.reason;
+    } else if(pv){
+      reasonText = pv.reason;
+    }
+    const icon = trend==='charge' ? '⚡' : trend==='discharge' ? '↓' : '';
+    const label = trend==='charge' ? `Lädt (+${fmtKwh(pv.amountWh)} kWh)` : trend==='discharge' ? `Entlädt (-${fmtKwh(pv.amountWh)} kWh)` : 'Ruht';
+
+    return `<div class="battery-card">
+      <span class="addr-link">${addrLink(addr)}</span>
+      <div class="battery-shell">
+        <div class="battery-bolt ${trend!=='idle' ? 'show-'+trend : ''}" style="font-size:13px;line-height:14px;">${icon}</div>
+        <div class="battery-fill ${lvl} ${trend==='charge'?'charging':''}" style="height:${Math.max(2,Math.min(100,soc))}%"></div>
+        <div class="battery-pct">${soc}%</div>
+      </div>
+      <div class="battery-status-label ${trend}">${label}</div>
+      ${reasonText ? `<div class="battery-status-label" style="font-style:italic;margin-top:2px;">${reasonText}</div>` : ''}
+      <div class="battery-meta-row"><span>${fmtKwh(st.capacity)} kWh</span><span>Reserve ${Number(st.reserveSoc)}%</span></div>
+      <div class="battery-meta-row"><span>Σ +${fmtKwh(st.charged)}</span><span>Σ -${fmtKwh(st.discharged)}</span></div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `<div class="battery-grid">${cards}</div>`;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MODUL: Batterie-Verlauf (SoC über Slots)
+   Quelle: OracleStorage.BatteryUpdated-Events — unabhängig davon,
+   ob eine BatteryManager-Adresse konfiguriert ist.
+   ════════════════════════════════════════════════════════════════ */
+async function renderBatteryHistory(body, meta){
+  const households = [...new Set(state.logs.battery.map(b=>norm(b.household)))];
+  if(households.length===0){
+    body.innerHTML = '<div class="empty">Keine BatteryUpdated-Events geladen.</div>';
+    meta.textContent = '';
+    return;
+  }
+  meta.textContent = `${state.logs.battery.length} Batterie-Datenpunkte`;
+  body.innerHTML = `
+    <div style="margin-bottom:10px;">
+      <select id="batteryHousehold">${households.map(a=>`<option value="${a}">${short(a)}</option>`).join('')}</select>
+    </div>
+    <canvas id="batteryChart" height="110"></canvas>`;
+  document.getElementById('batteryHousehold').addEventListener('change', draw);
+  draw();
+
+  function draw(){
+    const sel = document.getElementById('batteryHousehold').value;
+    const points = state.logs.battery.filter(b=>norm(b.household)===norm(sel)).sort((a,b)=>a.slot-b.slot);
+    const ctx = document.getElementById('batteryChart');
+    try{
+      if(state.charts.battery) state.charts.battery.destroy();
+      state.charts.battery = new Chart(ctx, {
+        type:'line',
+        data:{ labels: points.map(p=>'Slot '+p.slot), datasets:[
+          { label:'SoC (%)', data: points.map(p=>p.soc), borderColor:'#5B8DEF', backgroundColor:'rgba(91,141,239,.15)', tension:.3, fill:true, pointRadius:2 },
+        ]},
+        options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}},
+          tooltip:{ callbacks:{ afterTitle:(items)=>{ const p=points[items[0].dataIndex]; const t=blockTime(p.blockNumber); return t?fmtTime(t):''; } } }
+        }, scales:{
+          x:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
+          y:{ min:0, max:100, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
+        }}
+      });
+    }catch(err){
+      console.error('battery chart', err);
+      ctx.replaceWith(Object.assign(document.createElement('div'),{className:'err',textContent:'Chart.js konnte nicht geladen werden.'}));
     }
   }
 }
@@ -516,8 +738,10 @@ async function renderNetworkGraph(body, meta){
     });
     involved.forEach(addr=>{
       const p = pos[addr];
-      svg += `<circle cx="${p.x}" cy="${p.y}" r="16" fill="#1B2329" stroke="#2A343D" stroke-width="1"/>`;
-      svg += `<text x="${p.x}" y="${p.y+3}" text-anchor="middle" font-size="8" fill="#E7EDEF" font-family="IBM Plex Mono, monospace">${addr.slice(2,6)}</text>`;
+      svg += `<a href="https://sepolia.etherscan.io/address/${addr}" target="_blank" rel="noopener">
+        <circle cx="${p.x}" cy="${p.y}" r="16" fill="#1B2329" stroke="#2A343D" stroke-width="1"/>
+        <text x="${p.x}" y="${p.y+3}" text-anchor="middle" font-size="8" fill="#E7EDEF" font-family="IBM Plex Mono, monospace">${addr.slice(2,6)}</text>
+      </a>`;
     });
     svg += `</svg>`;
     holder.innerHTML = svg;
@@ -550,10 +774,15 @@ async function renderLedger(body, meta){
   }
 
   const rows = Object.entries(stats).map(([addr,s])=>{
-    const selfSuff = s.consumed>0n ? Math.max(0, 100 - (Number(s.bought)/Number(s.consumed))*100) : 100;
+    // Selbstversorgung = Anteil des Verbrauchs, der durch EIGENE Produktion gedeckt ist —
+    // unabhängig davon, ob der Markt einen etwaigen Rest-Bedarf erfolgreich zugekauft hat.
+    // produced=0 -> zwingend 0%. produced>=consumed -> 100% (gedeckelt, kein Export-Bonus).
+    const selfSuff = s.consumed>0n
+      ? (Number(s.produced < s.consumed ? s.produced : s.consumed) / Number(s.consumed)) * 100
+      : (s.produced>0n ? 100 : 0);
     const saldo = Number(s.earned - s.paid)/1e6;
     return `<tr>
-      <td class="addr">${short(addr)}</td>
+      <td class="addr">${addrLink(addr)}</td>
       <td>${fmtKwh(s.produced)}</td>
       <td>${fmtKwh(s.consumed)}</td>
       <td>${selfSuff.toFixed(0)}%</td>
@@ -573,17 +802,25 @@ async function renderLedger(body, meta){
    MODUL: Zahlungsübersicht
    ════════════════════════════════════════════════════════════════ */
 async function renderPayments(body, meta){
-  const trades = [...state.logs.trade].sort((a,b)=> b.blockNumber - a.blockNumber).slice(0,100);
+  const windowSize = parseInt(document.getElementById('cfgSlotWindow').value || '15', 10) || 15;
+  const allSlots = [...new Set(state.logs.slotSettled.map(s=>s.slot))].sort((a,b)=>a-b);
+  const visibleSlots = allSlots.slice(-windowSize); // nur die letzten N Slots, ältere fallen weg
+  const visibleSet = new Set(visibleSlots);
+
   const bySlot = {};
-  state.logs.slotSettled.forEach(s=> bySlot[s.slot] = s);
+  state.logs.slotSettled.forEach(s=>{ if(visibleSet.has(s.slot)) bySlot[s.slot] = s; });
   const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
 
-  meta.textContent = `${state.logs.trade.length} Trades gesamt (letzte 100 angezeigt)`;
+  const trades = state.logs.trade
+    .filter(t=>visibleSet.has(t.slot))
+    .sort((a,b)=> b.blockNumber - a.blockNumber);
+
+  meta.textContent = `${state.logs.trade.length} Trades gesamt · zeige letzte ${visibleSlots.length} von ${allSlots.length} Slots`;
   body.innerHTML = `
     <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px;">
       <div><canvas id="paymentsChart" height="140"></canvas></div>
-      <div class="scroll-y"><table><thead><tr><th>Slot</th><th>Produzent</th><th>Konsument</th><th>kWh</th><th>Token</th></tr></thead>
-        <tbody>${trades.map(t=>`<tr><td>${t.slot}</td><td class="addr">${short(t.producer)}</td><td class="addr">${short(t.consumer)}</td><td>${fmtKwh(t.energyWh)}</td><td>${fmtToken(t.amountPaid)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Keine Trades.</td></tr>'}</tbody>
+      <div class="scroll-y"><table><thead><tr><th>Slot</th><th>Zeit</th><th>Produzent</th><th>Konsument</th><th>kWh</th><th>Token</th></tr></thead>
+        <tbody>${trades.map(t=>`<tr><td>${t.slot}</td><td>${fmtTime(blockTime(t.blockNumber))||'–'}</td><td class="addr">${addrLink(t.producer)}</td><td class="addr">${addrLink(t.consumer)}</td><td>${fmtKwh(t.energyWh)}</td><td>${fmtToken(t.amountPaid)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Keine Trades.</td></tr>'}</tbody>
       </table></div>
     </div>`;
 
@@ -646,21 +883,24 @@ async function renderOracleHealth(body, meta){
 async function renderReconcile(body, meta){
   const oracleSet = new Set(state.logs.oracleRegistered.map(a=>norm(a)));
   const marketSet = new Set(state.households.map(a=>norm(a)));
-  const all = [...new Set([...oracleSet, ...marketSet])];
+  const batterySet = new Set(state.batteryHouseholds.map(a=>norm(a)));
+  const all = [...new Set([...oracleSet, ...marketSet, ...batterySet])];
   meta.textContent = `${all.length} Adresse(n) beobachtet`;
 
   if(all.length===0){ body.innerHTML = '<div class="empty">Keine Registrierungen gefunden.</div>'; return; }
 
+  const showBattery = !!state.battery;
   const rows = all.map(a=>{
-    const inO = oracleSet.has(a), inM = marketSet.has(a);
-    const mismatch = inO !== inM;
+    const inO = oracleSet.has(a), inM = marketSet.has(a), inB = batterySet.has(a);
+    const mismatch = inO !== inM; // Battery ist optional pro Haushalt -> fehlendes BatteryManager-Flag zählt bewusst nicht als Mismatch
     return `<tr style="${mismatch?'background:rgba(225,87,63,.06)':''}">
-      <td class="addr">${short(a)}</td>
+      <td class="addr">${addrLink(a)}</td>
       <td><span class="tag ${inO?'yes':'no'}">${inO?'ja':'nein'}</span></td>
       <td><span class="tag ${inM?'yes':'no'}">${inM?'ja':'nein'}</span></td>
+      ${showBattery ? `<td><span class="tag ${inB?'yes':'no'}">${inB?'ja':'nein'}</span></td>` : ''}
     </tr>`;
   }).join('');
-  body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>In Oracle</th><th>In Market</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  body.innerHTML = `<div class="scroll-y"><table><thead><tr><th>Adresse</th><th>In Oracle</th><th>In Market</th>${showBattery?'<th>In BatteryManager</th>':''}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -681,6 +921,12 @@ async function renderAdmin(body, meta){
       <p>Haushalt im Market registrieren. Nur Owner, und Adresse muss bereits im Oracle registriert sein.</p>
       <div class="row"><input id="regInput" placeholder="0x... (Haushalt Wallet)"><button id="btnReg">Registrieren</button></div>
       <div id="regResult"></div>
+    </div>
+    <div class="admin-block">
+      <p>Haushalt beim BatteryManager registrieren (analog zur Market-Registrierung). Adresse des BatteryManager-Contracts oben im Config-Feld eintragen.</p>
+      <div class="row"><input id="regBmHhInput" placeholder="0x... (Haushalt Wallet)"><button id="btnRegBmHh" ${state.batteryWithSigner?'':'disabled'}>Registrieren</button></div>
+      ${state.batteryWithSigner ? '' : '<p style="margin-top:6px;">⚠️ BatteryManager-Adresse oben im Config-Bereich eintragen und neu verbinden.</p>'}
+      <div id="regBmHhResult"></div>
     </div>
     <div class="admin-block">
       <p>Battery Manager registrieren. Nur Owner.</p>
@@ -708,6 +954,11 @@ async function renderAdmin(body, meta){
     if(!v) return;
     runTx(state.marketWithSigner.setBatteryManager(v), 'regBatResult');
   });
+  document.getElementById('btnRegBmHh').addEventListener('click', ()=>{
+    const v = document.getElementById('regBmHhInput').value.trim();
+    if(!v || !state.batteryWithSigner) return;
+    runTx(state.batteryWithSigner.addHousehold(v), 'regBmHhResult');
+  });
   document.getElementById('btnRegIC').addEventListener('click', ()=>{
     const v = document.getElementById('regICInput').value.trim();
     if(!v) return;
@@ -726,9 +977,9 @@ async function renderAdmin(body, meta){
     el.innerHTML = '<div class="empty">Transaktion wird gesendet…</div>';
     try{
       const tx = await txPromise;
-      el.innerHTML = `<div class="empty">Warte auf Bestätigung… <span class="mono">${short(tx.hash)}</span></div>`;
+      el.innerHTML = `<div class="empty">Warte auf Bestätigung… <a class="addr-link" href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" rel="noopener">${short(tx.hash)}</a></div>`;
       const receipt = await tx.wait();
-      el.innerHTML = `<div class="ok-msg">Erfolgreich · Block ${receipt.blockNumber} · <span class="mono">${short(tx.hash)}</span></div>`;
+      el.innerHTML = `<div class="ok-msg">Erfolgreich · Block ${receipt.blockNumber} · <a class="addr-link" href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank" rel="noopener">${short(tx.hash)}</a></div>`;
       await refreshAll();
     }catch(err){
       console.error(err);
