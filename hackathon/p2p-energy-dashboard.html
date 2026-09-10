@@ -167,7 +167,7 @@
   </div>
   <div>
     <label>BatteryManager Adresse (optional)</label>
-    <input id="cfgBattery" placeholder="0x... (Phase 2)">
+    <input id="cfgBattery" placeholder="0x...">
   </div>
   <div>
     <label>Ab Block</label>
@@ -181,6 +181,9 @@
   <button id="btnRefresh" disabled>↻ Alle Module aktualisieren</button>
   <div class="sep"></div>
   <label style="display:flex;align-items:center;gap:6px;">Slots in Zahlungsübersicht: <input type="number" id="cfgSlotWindow" value="15" min="1" max="500"></label>
+  <div class="sep"></div>
+  <label style="display:flex;align-items:center;gap:6px;" title="Simulierte Uhrzeit beim ersten geladenen Slot (Ankerpunkt), nicht bei Slot 0">Sim-Zeit @ 1. Slot: <input type="time" id="cfgSimStart" value="06:00"></label>
+  <label style="display:flex;align-items:center;gap:6px;">Sim-Min/Slot: <input type="number" id="cfgSimMinPerSlot" value="15" min="1" max="1440" style="width:60px;"></label>
   <div class="sep"></div>
   <span id="lastFetchInfo">Noch keine Daten geladen.</span>
 </div>
@@ -196,6 +199,7 @@
    P2PEnergyMarket.sol) abgeleitet.
    ════════════════════════════════════════════════════════════════ */
 const ORACLE_ABI = [
+  "function authorizeOracle(address)",
   "function getCurrentSlot() view returns (uint256)",
   "function isHouseholdRegistered(address) view returns (bool)",
   "function startTimestamp() view returns (uint256)",
@@ -279,6 +283,24 @@ function addrLink(addr){ return addr ? `<a class="addr-link" href="https://sepol
 function fmtToken(units){ return (Number(units) / 1e6).toLocaleString('de-CH',{maximumFractionDigits:4}); }
 function fmtKwh(wh){ return (Number(wh) / 1000).toLocaleString('de-CH',{maximumFractionDigits:3}); }
 function fmtTime(ts){ return ts ? new Date(Number(ts)*1000).toLocaleString('de-CH',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : ''; }
+// Näherung der SIMULIERTEN Uhrzeit aus der Slot-Nummer — die echte sim_hour aus
+// data_simulator.py wird nirgends on-chain geschrieben, daher approximieren wir
+// mit der bekannten fixen Rate (Standard: 15 Sim-Minuten/Slot, einstellbar oben)
+// ab einer konfigurierbaren Start-Uhrzeit. Nur so genau wie diese Annahme stimmt.
+// Fixe 15-Minuten-Schritte pro geladenem Datenpunkt (Index, nicht Slot-Nummer
+// oder Echtzeit-Differenz) — sim_hour wird zwar kontinuierlich aus realer Zeit
+// berechnet, aber jeder push_slot()-Durchlauf soll strukturell 15 Sim-Minuten
+// entsprechen; echte Verzögerungen zwischen Durchläufen (60-120s statt 60s)
+// würden die Achse sonst verzerren.
+function simTimeLabel(index){
+  const startStr = document.getElementById('cfgSimStart').value || '06:00';
+  const minPerSlot = parseFloat(document.getElementById('cfgSimMinPerSlot').value) || 15;
+  const [sh, sm] = startStr.split(':').map(Number);
+  const raw = (sh*60 + sm) + index*minPerSlot;
+  const totalMin = ((raw % 1440) + 1440) % 1440;
+  const h = Math.floor(totalMin/60), m = Math.round(totalMin%60);
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+}
 // Kanonisiert eine Adresse (Checksum-Format), damit Vergleiche/Keys nie an Gross-/Kleinschreibung scheitern.
 function norm(addr){ try{ return ethers.getAddress(addr); }catch(e){ return addr; } }
 
@@ -381,6 +403,10 @@ document.getElementById('btnConnectWallet').addEventListener('click', async ()=>
     state.signer = await bp.getSigner();
     state.walletAddress = await state.signer.getAddress();
     const net = await bp.getNetwork();
+    const oracleAddr = document.getElementById('cfgOracle').value.trim();
+    if(oracleAddr){
+      state.oracleWithSigner = new ethers.Contract(oracleAddr, ORACLE_ABI, state.signer);
+    }
     const marketAddr = document.getElementById('cfgMarket').value.trim();
     if(marketAddr){
       state.marketWithSigner = new ethers.Contract(marketAddr, MARKET_ABI, state.signer);
@@ -406,6 +432,14 @@ document.getElementById('btnRefresh').addEventListener('click', refreshAll);
 document.getElementById('cfgSlotWindow').addEventListener('change', ()=>{
   const mod = MODULES.find(m=>m.id==='payments');
   if(mod.enabled && state.connected) safeRender(mod);
+});
+['cfgSimStart','cfgSimMinPerSlot'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', ()=>{
+    ['timeline','batteryHistory'].forEach(mid=>{
+      const mod = MODULES.find(m=>m.id===mid);
+      if(mod.enabled && state.connected) safeRender(mod);
+    });
+  });
 });
 
 async function refreshAll(){
@@ -548,7 +582,7 @@ async function renderTimeline(body, meta){
     const slots = Object.keys(bySlot).map(Number).sort((a,b)=>a-b);
     const consumption = slots.map(s=>Number(bySlot[s].c)/1000);
     const production = slots.map(s=>Number(bySlot[s].p)/1000);
-    const times = slots.map(s=> blockTime(bySlot[s].block));
+    const chainTimes = slots.map(s=> blockTime(bySlot[s].block));
 
     const ctx = document.getElementById('timelineChart');
     if(slots.length===0){ ctx.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'Keine Meter-Daten im gewählten Blockbereich.'})); return; }
@@ -556,15 +590,19 @@ async function renderTimeline(body, meta){
       if(state.charts.timeline) state.charts.timeline.destroy();
       state.charts.timeline = new Chart(ctx, {
         type:'line',
-        data:{ labels: slots.map(s=>'Slot '+s), datasets:[
+        data:{ labels: slots.map((s,idx)=>simTimeLabel(idx)), datasets:[
           { label:'Verbrauch (kWh)', data:consumption, borderColor:'#E2A339', backgroundColor:'rgba(226,163,57,.12)', tension:.25, fill:true, pointRadius:2 },
           { label:'Produktion (kWh)', data:production, borderColor:'#49C9B0', backgroundColor:'rgba(73,201,176,.12)', tension:.25, fill:true, pointRadius:2 },
         ]},
         options:{ responsive:true, plugins:{
           legend:{labels:{color:'#8B98A0'}},
-          tooltip:{ callbacks:{ afterTitle: (items)=>{ const t = times[items[0].dataIndex]; return t ? fmtTime(t) : ''; } } }
+          tooltip:{ callbacks:{ afterTitle: (items)=>{
+            const i = items[0].dataIndex;
+            const t = chainTimes[i];
+            return [`Slot ${slots[i]}`, t ? `Chain-Zeit: ${fmtTime(t)}` : ''].filter(Boolean);
+          } } }
         }, scales:{
-          x:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
+          x:{ title:{display:true,text:'Simulierte Zeit (Näherung)',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
           y:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
         }}
       });
@@ -674,13 +712,16 @@ async function renderBatteryHistory(body, meta){
       if(state.charts.battery) state.charts.battery.destroy();
       state.charts.battery = new Chart(ctx, {
         type:'line',
-        data:{ labels: points.map(p=>'Slot '+p.slot), datasets:[
+        data:{ labels: points.map((p,idx)=>simTimeLabel(idx)), datasets:[
           { label:'SoC (%)', data: points.map(p=>p.soc), borderColor:'#5B8DEF', backgroundColor:'rgba(91,141,239,.15)', tension:.3, fill:true, pointRadius:2 },
         ]},
         options:{ responsive:true, plugins:{legend:{labels:{color:'#8B98A0'}},
-          tooltip:{ callbacks:{ afterTitle:(items)=>{ const p=points[items[0].dataIndex]; const t=blockTime(p.blockNumber); return t?fmtTime(t):''; } } }
+          tooltip:{ callbacks:{ afterTitle:(items)=>{
+            const p=points[items[0].dataIndex]; const t=blockTime(p.blockNumber);
+            return [`Slot ${p.slot}`, t ? `Chain-Zeit: ${fmtTime(t)}` : ''].filter(Boolean);
+          } } }
         }, scales:{
-          x:{ ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
+          x:{ title:{display:true,text:'Simulierte Zeit (Näherung)',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
           y:{ min:0, max:100, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} }
         }}
       });
@@ -918,6 +959,11 @@ async function renderAdmin(body, meta){
 
   body.innerHTML = `
     <div class="admin-block">
+      <p>Oracle Wallet im Oracle Storage autorisieren. Wird benötigt, um Haushalte im Oracle Storage zu registrieren. Nur Owner.</p>
+      <div class="row"><input id="authInput" placeholder="0x... (Oracle Wallet)"><button id="btnAuth">Autorisieren</button></div>
+      <div id="authResult"></div>
+    </div>
+    <div class="admin-block">
       <p>Haushalt im Market registrieren. Nur Owner, und Adresse muss bereits im Oracle registriert sein.</p>
       <div class="row"><input id="regInput" placeholder="0x... (Haushalt Wallet)"><button id="btnReg">Registrieren</button></div>
       <div id="regResult"></div>
@@ -944,6 +990,11 @@ async function renderAdmin(body, meta){
       <div id="tokenResult"></div>
     </div>`;
 
+  document.getElementById('btnAuth').addEventListener('click', ()=>{
+    const v = document.getElementById('authInput').value.trim();
+    if(!v) return;
+    runTx(state.oracleWithSigner.authorizeOracle(v), 'authResult');
+  });
   document.getElementById('btnReg').addEventListener('click', ()=>{
     const v = document.getElementById('regInput').value.trim();
     if(!v) return;

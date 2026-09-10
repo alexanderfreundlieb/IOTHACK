@@ -44,6 +44,7 @@ from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
 from data_simulator import EnergySimulator
+from data_simulator import SIM_MINUTES_PER_SLOT
 
 load_dotenv()
 
@@ -86,7 +87,9 @@ class OracleWriter:
         )
 
         self.simulator = EnergySimulator(CONFIG_PATH)
-        self.simulator.start_real_time -= 6 * 60 * 60   # 21600s = 6 hours
+        DESIRED_START_SIM_HOUR = 6  # 06:00
+        real_seconds_per_sim_hour = 3600 / SIM_MINUTES_PER_SLOT   # = 240s bei 15 Sim-Min/Slot
+        self.simulator.start_real_time -= DESIRED_START_SIM_HOUR * real_seconds_per_sim_hour  # = 1440s = 24 reale Minuten
         self.chain_id = bc["chain_id"]
 
     # ─────────────────────────────────────────────────────────────
