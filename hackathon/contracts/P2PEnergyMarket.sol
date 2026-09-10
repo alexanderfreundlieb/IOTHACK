@@ -335,8 +335,17 @@ contract P2PEnergyMarket {
     ) external returns (uint256) {
         require(msg.sender == address(this), "internal only");
 
-        // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion)
-        uint256 amountPaid = calculateCost(flowWh);
+        // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion).
+        // Phase 3: der Incentive-Multiplikator gilt fuer den KONSUMENTEN
+        // (Kaeufer), nicht den Produzenten - siehe IncentiveController.
+        // getPriceMultiplier() ist `view`, daher kein try/catch noetig wie bei
+        // batteryManager.decideAction() oben.
+        uint256 pricePerKwh = energyPricePerKwh;
+        if (address(incentiveController) != address(0)) {
+            uint256 multiplier = incentiveController.getPriceMultiplier(consumer);
+            pricePerKwh = (energyPricePerKwh * multiplier) / 1000;
+        }
+        uint256 amountPaid = (flowWh * pricePerKwh) / 1000;
 
         // Step 5: Konsument muss vorher approve() aufgerufen haben.
         stablecoin.transferFrom(consumer, producer, amountPaid);
@@ -359,7 +368,10 @@ contract P2PEnergyMarket {
         return households;
     }
 
-    /// @notice Helper: Berechnet den Token-Betrag für eine Energiemenge
+    /// @notice Helper: Berechnet den Token-Betrag zum Basispreis (ohne Incentive).
+    /// @dev _executeTrade() ruft dies NICHT auf, sondern rechnet mit dem
+    ///      konsumentenspezifischen Preis - diese Funktion bleibt als
+    ///      Vorschau-/UI-Helfer fuer den unveraenderten Basispreis stehen.
     function calculateCost(uint256 energyWh) public view returns (uint256) {
         // Wh -> kWh -> Token (mit Decimals)
         return (energyWh * energyPricePerKwh) / 1000;

@@ -23,6 +23,7 @@ Usage:
 
 import json
 import sqlite3
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,9 @@ DB_PATH = Path(__file__).parent.parent / "data" / "history.db"
 
 # Mirrors data_simulator.SIM_MINUTES_PER_SLOT / 60
 SLOT_FRACTION_OF_HOUR = 0.25
+
+# The simulated clock advances 15 simulated minutes per real minute.
+SIM_HOURS_PER_REAL_SECOND = SLOT_FRACTION_OF_HOUR / 60.0
 
 # A gap larger than this between consecutive rows means the simulator was
 # restarted, which resets both the simulated clock and the battery SoC.
@@ -103,6 +107,44 @@ def load_household_config(config_path: Path = CONFIG_PATH) -> Dict[str, dict]:
         return {h["id"]: h for h in json.load(f)["households"]}
 
 
+def current_sim_hour(db_path: Path = DB_PATH,
+                     max_staleness_seconds: int = 180) -> float:
+    """
+    The simulator's *simulated* hour right now, extrapolated from the newest
+    row in the history DB.
+
+    The simulated clock lives in the oracle_writer process's memory and cannot
+    be recomputed from wall time - it resets on every restart (to 18.0, not 0.0,
+    because oracle_writer offsets start_real_time by 6 hours). Reading the last
+    persisted value and extrapolating forward is the only correct source.
+
+    Raises if the history is stale, which means oracle_writer is not running.
+    Extrapolating across a restart would silently produce a wrong hour, so this
+    fails loudly instead.
+    """
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT timestamp, sim_hour FROM weather_history "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("history.db has no weather rows yet")
+
+    ts, sim_hour = row
+    age = time.time() - ts
+    if age > max_staleness_seconds:
+        raise RuntimeError(
+            f"history.db is {age:.0f}s stale (newest row at sim_hour "
+            f"{sim_hour:.2f}) - is oracle_writer.py running?"
+        )
+    return (sim_hour + age * SIM_HOURS_PER_REAL_SECOND) % 24.0
+
+
+def sim_hour_after_slots(sim_hour: float, slots: int) -> float:
+    """Simulated hour `slots` slots into the future."""
+    return (sim_hour + slots * SLOT_FRACTION_OF_HOUR) % 24.0
+
+
 # ─────────────────────────────────────────────────────────────────────
 #  Model
 # ─────────────────────────────────────────────────────────────────────
@@ -114,6 +156,10 @@ class ForecastModel:
 
     Production: single slope through the origin on irradiance, pooled over all
     PV households after normalising by peak_kwp.
+
+    Irradiance: mean per hour bin, so a forecast for a future slot does not have
+    to rely on the current reading. Learned from history rather than reproducing
+    the simulator's sine formula, so it stays honest about being a model.
     """
 
     def __init__(self, n_bins: int = 24):
@@ -121,6 +167,8 @@ class ForecastModel:
         self.bin_factor: Dict[int, float] = {}
         self.bin_count: Dict[int, int] = {}
         self.global_factor: float = 1.0
+        self.bin_irradiance: Dict[int, float] = {}
+        self.global_irradiance: float = 0.0
         self.production_slope: float = 0.0
         self.households: Dict[str, dict] = {}
         self.is_trained = False
@@ -135,7 +183,7 @@ class ForecastModel:
         d = abs(a - b) % self.n_bins
         return min(d, self.n_bins - d)
 
-    def _nearest_populated(self, b: int) -> Optional[float]:
+    def _nearest_populated(self, b: int, table: Dict[int, float]) -> Optional[float]:
         """
         Mean of the closest populated bin(s) on the circular hour axis.
 
@@ -146,9 +194,9 @@ class ForecastModel:
         """
         for dist in range(1, MAX_NEIGHBOUR_DISTANCE + 1):
             hits = [
-                self.bin_factor[c]
+                table[c]
                 for c in ((b - dist) % self.n_bins, (b + dist) % self.n_bins)
-                if c in self.bin_factor
+                if c in table
             ]
             if hits:
                 return sum(hits) / len(hits)
@@ -163,12 +211,20 @@ class ForecastModel:
             n = self.bin_count[b]
             result = (self.bin_factor[b], "ok" if n >= 3 else "sparse")
         else:
-            neighbour = self._nearest_populated(b)
+            neighbour = self._nearest_populated(b, self.bin_factor)
             result = ((neighbour, "interpolated") if neighbour is not None
                       else (self.global_factor, "fallback"))
 
         self._estimate_cache[b] = result
         return result
+
+    def estimate_irradiance(self, sim_hour: float) -> float:
+        """Expected irradiance at a simulated hour, for forecasting ahead."""
+        b = self._bin(sim_hour)
+        if b in self.bin_irradiance:
+            return self.bin_irradiance[b]
+        neighbour = self._nearest_populated(b, self.bin_irradiance)
+        return neighbour if neighbour is not None else self.global_irradiance
 
     def _consumption_scale(self, household_id: str) -> float:
         """Wh per unit load factor for this household."""
@@ -203,6 +259,19 @@ class ForecastModel:
         self.bin_count = {b: len(v) for b, v in by_bin.items()}
         self._estimate_cache.clear()
 
+        # Irradiance per bin. Weather is shared across households, so deduplicate
+        # by timestamp - otherwise every reading is counted four times.
+        irr_by_bin: Dict[int, List[float]] = defaultdict(list)
+        seen_ts = set()
+        for s in samples:
+            if s.timestamp in seen_ts:
+                continue
+            seen_ts.add(s.timestamp)
+            irr_by_bin[self._bin(s.sim_hour)].append(s.irradiance)
+        self.bin_irradiance = {b: sum(v) / len(v) for b, v in irr_by_bin.items()}
+        all_irr = [x for v in irr_by_bin.values() for x in v]
+        self.global_irradiance = sum(all_irr) / len(all_irr) if all_irr else 0.0
+
         # Production: least squares through the origin, y = slope * irradiance,
         # on production normalised by peak_kwp. Daylight rows only - night rows
         # are structurally zero and would just inflate the fit quality.
@@ -222,13 +291,22 @@ class ForecastModel:
     # ── prediction ───────────────────────────────────────────────────
 
     def predict(self, household_id: str, sim_hour: float,
-                irradiance: float) -> Tuple[float, float, str]:
-        """Returns (consumption_wh, production_wh, confidence)."""
+                irradiance: Optional[float] = None) -> Tuple[float, float, str]:
+        """
+        Returns (consumption_wh, production_wh, confidence).
+
+        Pass a measured `irradiance` to score the model against known weather.
+        Omit it when forecasting a future slot, where the weather is not known
+        yet and has to be projected from the simulated hour.
+        """
         if not self.is_trained:
             raise RuntimeError("Model not trained")
 
         factor, confidence = self._estimate(self._bin(sim_hour))
         consumption = max(0.0, factor * self._consumption_scale(household_id))
+
+        if irradiance is None:
+            irradiance = self.estimate_irradiance(sim_hour)
 
         peak = self.households[household_id]["pv_peak_kwp"]
         production = max(0.0, self.production_slope * max(0.0, irradiance) * peak)
@@ -279,6 +357,7 @@ def validate(samples: List[Sample], households: Dict[str, dict],
     cons_model: List[Tuple[float, float]] = []
     cons_base: List[Tuple[float, float]] = []
     prod_model: List[Tuple[float, float]] = []
+    prod_projected: List[Tuple[float, float]] = []
     conf_counts: Dict[str, int] = defaultdict(int)
 
     for holdout in sorted(sizes):
@@ -302,6 +381,10 @@ def validate(samples: List[Sample], households: Dict[str, dict],
             cons_base.append((s.consumption_wh, baseline.get(s.household_id, 0.0)))
             if households[s.household_id]["pv_peak_kwp"] > 0:
                 prod_model.append((s.production_wh, p))
+                # What the live path actually does: no measured weather, so the
+                # irradiance has to be projected from the simulated hour too.
+                _, p_proj, _ = model.predict(s.household_id, s.sim_hour)
+                prod_projected.append((s.production_wh, p_proj))
 
     print(f"cross-validated over {len(sizes)} folds, {len(cons_model)} scored rows\n")
 
@@ -338,8 +421,11 @@ def validate(samples: List[Sample], households: Dict[str, dict],
     )
     print(f"  estimate source: {breakdown}")
 
+    pp_mae, pp_mape = _mae_mape(prod_projected)
     print("\nproduction")
-    print(f"  model    MAE {pm_mae:8.1f} Wh   MAPE {fmt(pm_mape)}")
+    print(f"  measured weather  MAE {pm_mae:8.1f} Wh   MAPE {fmt(pm_mape)}")
+    print(f"  projected weather MAE {pp_mae:8.1f} Wh   MAPE {fmt(pp_mape)}"
+          f"   <- the live forecast path")
 
     print("\nNote: slot-level consumption MAPE below ~8% is not achievable - "
           "that is the simulator's\n      uniform(0.85, 1.15) noise. A better "
