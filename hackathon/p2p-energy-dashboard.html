@@ -189,6 +189,20 @@ const BATTERY_ABI = [
   "event DecisionMade(address indexed household, uint8 action, uint256 amountWh, uint256 slot, string reason)"
 ];
 
+const INCENTIVE_ABI = [
+  "function owner() view returns (address)",
+  "function getReputationScore(address household) view returns (uint256)",
+  "function getPriceMultiplier(address household) view returns (uint256)",
+  "function forecasts(address,uint256) view returns (uint256 expectedConsumptionWh, uint256 expectedProductionWh, uint256 slot, uint256 timestamp)",
+  "function actuals(address,uint256) view returns (uint256 actualConsumptionWh, uint256 actualProductionWh, uint256 slot)",
+  "event ForecastSubmitted(address indexed household, uint256 slot, uint256 expectedConsumption)",
+  "event ActualSubmitted(address indexed household, uint256 slot, uint256 actualConsumption)",
+  "event ScoreUpdated(address indexed household, uint256 newScore, uint256 deviation)"
+];
+// Bekannte Konstanten aus IncentiveController.sol (public constant, ändern sich nicht) —
+// direkt übernommen statt on-chain abgefragt, da als "public constant" ohnehin fix.
+const INCENTIVE_BASE_MULTIPLIER = 1000; // 1000 = neutraler Preis (0% Rabatt/Aufschlag)
+
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
   "function allowance(address owner, address spender) view returns (uint256)"
@@ -207,7 +221,7 @@ const SIM_START_MINUTES = 6 * 60; // 06:00, fix (siehe oracle_writer.py-Fix)
    STATE
    ════════════════════════════════════════════════════════════════ */
 const state = {
-  provider: null, oracle: null, market: null, battery: null,
+  provider: null, oracle: null, market: null, battery: null, incentive: null,
   signer: null, myAddress: null, role: 'none', // 'none' | 'owner' | 'household' | 'unknown'
   marketWithSigner: null, oracleWithSigner: null, batteryWithSigner: null,
   connected: false,
@@ -274,13 +288,15 @@ function renderSidebar(){
             <label class="f">RPC URL</label>
             <input class="full" id="cfgRpc" value="https://ethereum-sepolia-rpc.publicnode.com">
             <label class="f">OracleStorage</label>
-            <input class="full" id="cfgOracle" value="0xED8816C5C64Bb46763c201924e7467525eBD4dc7">
+            <input class="full" id="cfgOracle" value="0xD67f5d8CF4338FeFB65A43B581880CA65A6eC3eB">
             <label class="f">P2PEnergyMarket</label>
-            <input class="full" id="cfgMarket" value="0x6bea08ff05D7DE58B0B703BF34EbEBdfd5971781">
+            <input class="full" id="cfgMarket" value="0xbA9807E2A47566Eaa863A3f3EffAaAC3DFc54404">
             <label class="f">BatteryManager (optional)</label>
-            <input class="full" id="cfgBattery" value="0x8F576700D1Aa0493a46c84A9Ab3B6B87cCD7039D">
+            <input class="full" id="cfgBattery" value="0xad8bfCa01391F8E45b15d74874abf9420b581da8">
+            <label class="f">IncentiveController (optional)</label>
+            <input class="full" id="cfgIncentive" value="0x205D53728DF46bf3b5e64ADCfb4e55032BAd1547">
             <label class="f">Ab Block</label>
-            <input class="full" id="cfgFromBlock" value="11661170">
+            <input class="full" id="cfgFromBlock" value="11675505">
           </div>
         </details>
       </div>`;
@@ -391,6 +407,8 @@ async function doConnect(){
     state.oracle = new ethers.Contract(oracleAddr, ORACLE_ABI, state.provider);
     state.market = new ethers.Contract(marketAddr, MARKET_ABI, state.provider);
     state.battery = batteryAddr ? new ethers.Contract(batteryAddr, BATTERY_ABI, state.provider) : null;
+    const incentiveAddr = document.getElementById('cfgIncentive').value.trim();
+    state.incentive = incentiveAddr ? new ethers.Contract(incentiveAddr, INCENTIVE_ABI, state.provider) : null;
     state.connected = true;
     statusEl.innerHTML = '<div class="empty">Lade Daten…</div>';
     await refreshAll();
@@ -496,7 +514,7 @@ async function refreshAll(){
     renderSidebar();
     renderMain();
     const info = document.getElementById('lastFetchInfo');
-    if(info) info.textContent = `Zuletzt: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} HH · ${state.logs.meter.length} Meter · ${state.logs.trade.length} Trades · ${state.logs.battery.length} Batterie`;
+    if(info) info.textContent = `Zuletzt: ${new Date().toLocaleTimeString('de-CH')} · ${state.households.length} HH · ${state.logs.meter.length} Meter · ${state.logs.trade.length} Trades · ${state.logs.battery.length} Batterie · ${state.logs.predictions.length} Prognosen`;
   }catch(err){
     console.error(err);
   }finally{
@@ -518,8 +536,26 @@ async function fetchAllLogs(){
     queryFilterChunked(state.oracle, state.oracle.filters.HouseholdRegistered(), fromBlock, toBlock),
     queryFilterChunked(state.oracle, state.oracle.filters.BatteryUpdated(), fromBlock, toBlock),
     state.battery ? queryFilterChunked(state.battery, state.battery.filters.DecisionMade(), fromBlock, toBlock) : Promise.resolve([]),
+    state.incentive ? queryFilterChunked(state.incentive, state.incentive.filters.ActualSubmitted(), fromBlock, toBlock) : Promise.resolve([]),
+    state.incentive ? queryFilterChunked(state.incentive, state.incentive.filters.ScoreUpdated(), fromBlock, toBlock) : Promise.resolve([]),
   ];
-  const [meterRaw, tradeRaw, slotSettledRaw, oracleRegRaw, batteryRaw, decisionRaw] = await Promise.all(queries);
+  const [meterRaw, tradeRaw, slotSettledRaw, oracleRegRaw, batteryRaw, decisionRaw, actualSubmittedRaw, scoreUpdatedRaw] = await Promise.all(queries);
+
+  // ScoreUpdated trägt keine Slot-Nummer -> über denselben Block + Haushalt mit dem
+  // zugehörigen ActualSubmitted-Event verknüpfen (beide werden in derselben Tx emittiert,
+  // da _updateScoreForSlot() direkt aus submitActual() heraus aufgerufen wird).
+  const actualByBlockHh = {};
+  actualSubmittedRaw.forEach(l=>{ actualByBlockHh[`${l.blockNumber}_${norm(l.args.household)}`] = Number(l.args.slot); });
+  const predictions = scoreUpdatedRaw.map(l=>{
+    const key = `${l.blockNumber}_${norm(l.args.household)}`;
+    return {
+      household: l.args.household,
+      newScore: Number(l.args.newScore),
+      deviationPromille: Number(l.args.deviation),
+      slot: actualByBlockHh[key] ?? null,
+      blockNumber: l.blockNumber,
+    };
+  });
 
   state.logs = {
     meter: meterRaw.map(l=>({ household: l.args.household, slot: Number(l.args.slot), consumption: l.args.consumption, production: l.args.production, blockNumber: l.blockNumber })),
@@ -528,6 +564,7 @@ async function fetchAllLogs(){
     oracleRegistered: [...new Set(oracleRegRaw.map(l=>l.args.household))],
     battery: batteryRaw.map(l=>({ household: l.args.household, slot: Number(l.args.slot), soc: Number(l.args.soc), blockNumber: l.blockNumber })),
     decisions: decisionRaw.map(l=>({ household: l.args.household, amountWh: l.args.amountWh, slot: Number(l.args.slot), reason: l.args.reason, blockNumber: l.blockNumber })),
+    predictions,
   };
 
   await fetchBlockTimestamps();
@@ -539,7 +576,7 @@ async function fetchBlockTimestamps(){
   const allBlocks = new Set([
     ...state.logs.meter.map(l=>l.blockNumber), ...state.logs.trade.map(l=>l.blockNumber),
     ...state.logs.slotSettled.map(l=>l.blockNumber), ...state.logs.battery.map(l=>l.blockNumber),
-    ...state.logs.decisions.map(l=>l.blockNumber),
+    ...state.logs.decisions.map(l=>l.blockNumber), ...state.logs.predictions.map(l=>l.blockNumber),
   ]);
   const toFetch = [...allBlocks].filter(b=> !(b in state.blockTimestamps));
   // Kein harter Deckel mehr (führte bei längeren Simulationen zu fehlenden Zeitangaben) —
@@ -673,6 +710,10 @@ function computeEnergyFlow(scope){
 async function renderOverviewPage(el){
   const scope = state.role==='household' ? state.myAddress : state.viewAddress;
   const isAll = scope === 'all';
+  // Approve gehört zur SIGNER-Adresse (ERC20 approve() nutzt immer msg.sender), nicht
+  // zur Rolle: falls der Owner zusätzlich ein registrierter Haushalt ist und sich selbst
+  // in der Sidebar auswählt, muss die Freigabe trotzdem verfügbar sein.
+  const canApprove = !isAll && norm(scope) === norm(state.myAddress);
   const title = isAll ? 'Übersicht — Alle Haushalte' : `Übersicht — ${short(scope)}`;
 
   el.innerHTML = `
@@ -713,8 +754,12 @@ async function renderOverviewPage(el){
       <div class="section"><h2>${icon('pulse')} Batterie-Verlauf (SoC)</h2><div id="battHistBox"></div></div>
     </div>
     <div class="section" id="ledgerSection"></div>
+    ${!isAll ? `<div class="section-row">
+      <div class="section"><h2>${icon('pulse')} Prognose-Statistik</h2><div id="predictionBox"></div></div>
+      <div class="section"><h2>${icon('card')} Ø Strompreis</h2><div id="priceStatBox"></div></div>
+    </div>` : ''}
     <div class="section"><h2>${icon('card')} Zahlungsübersicht</h2><div id="paymentsBox"></div></div>
-    ${state.role==='household' ? `<div class="section"><h2>${icon('unlock')} Stablecoin-Freigabe</h2><div id="approveBox"></div></div>` : (isAll ? '' : `<div class="empty" style="font-size:11px;">${icon('info')} Stablecoin-Freigabe kann nur vom Haushalt selbst mit dessen eigenem Wallet erteilt werden — als Owner nicht verfügbar.</div>`)}
+    ${canApprove ? `<div class="section"><h2>${icon('unlock')} Stablecoin-Freigabe</h2><div id="approveBox"></div></div>` : (isAll ? '' : `<div class="empty" style="font-size:11px;">${icon('info')} Stablecoin-Freigabe kann nur vom Haushalt selbst mit dessen eigenem Wallet erteilt werden.</div>`)}
   `;
 
   document.getElementById('timeRangeSelect').value = state.timeRangeDays;
@@ -730,8 +775,12 @@ async function renderOverviewPage(el){
   try{ await renderBatteryStatusBox(scope); }catch(e){ console.error(e); document.getElementById('battStatusBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
   try{ await renderBatteryHistBox(scope); }catch(e){ console.error(e); document.getElementById('battHistBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
   try{ await renderLedgerSection(scope); }catch(e){ console.error(e); document.getElementById('ledgerSection').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  if(!isAll){
+    try{ await renderPredictionBox(scope); }catch(e){ console.error(e); document.getElementById('predictionBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
+    try{ await renderPriceStatBox(scope); }catch(e){ console.error(e); document.getElementById('priceStatBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
+  }
   try{ await renderPaymentsBox(scope); }catch(e){ console.error(e); document.getElementById('paymentsBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
-  if(state.role==='household'){
+  if(canApprove){
     try{ await renderApproveBox(); }catch(e){ console.error(e); document.getElementById('approveBox').innerHTML = `<div class="err">${e.message||e}</div>`; }
   }
 }
@@ -910,6 +959,89 @@ async function renderLedgerSection(scope){
   box.innerHTML = `<h2>${icon('chart')} Selbstversorgung & Saldo</h2><div class="scroll-y"><table><thead><tr><th>Haushalt</th><th>Produziert</th><th>Verbraucht</th><th>Selbstvers.</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+/* ════════════════════════════════════════════════════════════════
+   PROGNOSE-STATISTIK (Prediction vs. Realität) — nur Einzelhaushalt
+   Quelle: IncentiveController.ScoreUpdated-Events (deviation bereits
+   on-chain berechnet, siehe _calculateDeviation() im Contract) —
+   verknüpft mit ActualSubmitted für die Slot-Nummer.
+   ════════════════════════════════════════════════════════════════ */
+async function renderPredictionBox(scope){
+  const box = document.getElementById('predictionBox');
+  if(!state.incentive){ box.innerHTML = '<div class="empty">Kein IncentiveController konfiguriert.</div>'; return; }
+  const points = state.logs.predictions.filter(p=>norm(p.household)===norm(scope)).sort((a,b)=>a.blockNumber-b.blockNumber);
+  if(points.length===0){ box.innerHTML = '<div class="empty">Noch keine bewerteten Prognosen für diesen Haushalt (ForecastSubmitted + ActualSubmitted nötig).</div>'; return; }
+
+  const avgDeviation = points.reduce((a,p)=>a+p.deviationPromille,0) / points.length;
+  const latestScore = points[points.length-1].newScore;
+  let multiplierNote = '';
+  try{
+    const mult = Number(await state.incentive.getPriceMultiplier(scope));
+    const pct = ((mult - INCENTIVE_BASE_MULTIPLIER) / INCENTIVE_BASE_MULTIPLIER * 100);
+    multiplierNote = `<div class="kpi-card"><div class="v ${pct<=0?'ok':'warn'}">${pct>0?'+':''}${pct.toFixed(1)}%</div><div class="l">Aktueller Preisaufschlag/-rabatt</div></div>`;
+  }catch(e){}
+
+  box.innerHTML = `
+    <div class="kpi-row" style="margin-bottom:14px;">
+      <div class="kpi-card"><div class="v">${latestScore}</div><div class="l">Reputationsscore (0-1000)</div></div>
+      <div class="kpi-card"><div class="v">${(avgDeviation/10).toFixed(1)}%</div><div class="l">Ø Abweichung Prognose↔Ist</div></div>
+      ${multiplierNote}
+    </div>
+    <canvas id="predictionChart" height="90"></canvas>
+    <div class="desc" style="margin-top:8px;">Abweichung in % vom prognostizierten Verbrauch (Balken, linke Achse) und Reputationsscore-Verlauf (Linie, rechte Achse). Bewertet wird laut Contract nur der Verbrauch, nicht die PV-Erzeugung.</div>`;
+
+  if(state.charts.prediction) state.charts.prediction.destroy();
+  state.charts.prediction = new Chart(document.getElementById('predictionChart'), {
+    type:'bar',
+    data:{ labels: points.map(p=>simTimeLabel(blockTime(p.blockNumber))), datasets:[
+      { type:'bar', label:'Abweichung (%)', data:points.map(p=>p.deviationPromille/10), backgroundColor:'#E2A339', yAxisID:'y' },
+      { type:'line', label:'Reputationsscore', data:points.map(p=>p.newScore), borderColor:'#5B8DEF', backgroundColor:'#5B8DEF', tension:.3, pointRadius:2, yAxisID:'y1' },
+    ]},
+    options:{ responsive:true, plugins:{ legend:{labels:{color:'#8B98A0'}},
+      tooltip:{ callbacks:{ afterTitle:(items)=>{ const p=points[items[0].dataIndex]; return p.slot!==null ? `Slot ${p.slot}` : ''; } } } },
+      scales:{
+        x:{ title:{display:true,text:'Simulierte Zeit',color:'#5B666D'}, ticks:{color:'#5B666D',maxRotation:0,autoSkip:true}, grid:{display:false} },
+        y:{ position:'left', title:{display:true,text:'Abweichung (%)',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{color:'rgba(255,255,255,.04)'} },
+        y1:{ position:'right', min:0, max:1000, title:{display:true,text:'Score',color:'#5B666D'}, ticks:{color:'#5B666D'}, grid:{display:false} },
+      }
+    }
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Ø STROMPREIS — nur Einzelhaushalt
+   Effektiv gezahlter Preis (aus EnergyTraded als Konsument), im
+   Vergleich zum aktuellen Basispreis und Incentive-Multiplikator.
+   ════════════════════════════════════════════════════════════════ */
+async function renderPriceStatBox(scope){
+  const box = document.getElementById('priceStatBox');
+  const purchases = state.logs.trade.filter(t=>norm(t.consumer)===norm(scope));
+  if(purchases.length===0){ box.innerHTML = '<div class="empty">Dieser Haushalt hat noch keine Energie zugekauft.</div>'; return; }
+
+  const totalWh = purchases.reduce((a,t)=>a+Number(t.energyWh),0);
+  const totalPaid = purchases.reduce((a,t)=>a+Number(t.amountPaid),0);
+  const avgPricePerKwh = totalWh>0 ? (totalPaid/1e6) / (totalWh/1000) : 0;
+
+  let basePriceNote = '', multNote = '';
+  try{
+    const basePrice = Number(await state.market.energyPricePerKwh())/1e6;
+    basePriceNote = `<div class="kpi-card"><div class="v">${basePrice.toFixed(4)}</div><div class="l">Aktueller Basispreis (Token/kWh)</div></div>`;
+  }catch(e){}
+  if(state.incentive){
+    try{
+      const mult = Number(await state.incentive.getPriceMultiplier(scope));
+      multNote = `<div class="kpi-card"><div class="v">${(mult/1000).toFixed(2)}×</div><div class="l">Aktueller Preis-Multiplikator</div></div>`;
+    }catch(e){}
+  }
+
+  box.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="v">${avgPricePerKwh.toFixed(4)}</div><div class="l">Ø bezahlter Preis (Token/kWh)</div></div>
+      ${basePriceNote}
+      ${multNote}
+    </div>
+    <div class="desc" style="margin-top:10px;">Auf Basis von ${purchases.length} Zukäufen (${fmtKwh(totalWh)} kWh gesamt, ${fmtToken(totalPaid)} Token gesamt).</div>`;
+}
+
 async function renderPaymentsBox(scope){
   const isAll = scope === 'all';
   const box = document.getElementById('paymentsBox');
@@ -1031,7 +1163,7 @@ async function renderAdminPanel(){
     </div>
     <div class="admin-block">
       <p>IncentiveController-Contract im Market eintragen.</p>
-      <div class="row"><input id="regICInput" placeholder="0x... (IncentiveController)" value="0x18eB3E472980E9210C0ad6d42aB93dF98f083310"><button id="btnRegIC">Registrieren</button></div>
+      <div class="row"><input id="regICInput" placeholder="0x... (IncentiveController)"><button id="btnRegIC">Registrieren</button></div>
       <div id="regICResult"></div>
     </div>
     <div class="admin-block">
