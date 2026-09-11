@@ -1,30 +1,34 @@
 """
 ai_forecast.py
 
-Phase 3 (optional): trains a forecast model on the collected history and writes
-hourly consumption/production predictions into the IncentiveController contract,
-then submits the matching actuals once each slot has elapsed.
+Phase 3 (optional): Trainiert das Prognosemodell auf der gesammelten Historie,
+schreibt stündliche Verbrauchs- und Erzeugungsprognosen in den
+IncentiveController und reicht die zugehörigen Ist-Werte nach, sobald ein Slot
+abgelaufen ist. Daraus berechnet der Contract Reputationsscore und Preisfaktor.
 
-The model itself lives in forecast_model.py.
+Das Modell selbst liegt in forecast_model.py.
 
-Two things this has to get right, both of which are easy to get wrong:
+Zwei Punkte, die dieses Skript korrekt treffen muss:
 
-  1. The simulated clock. Training rows carry `sim_hour` from the simulator's
-     virtual clock, which runs 15x real time and resets on every oracle_writer
-     restart. Wall-clock time is NOT a substitute - using it trains on one clock
-     and predicts on another. forecast_model.current_sim_hour() reconstructs it
-     from the newest history row.
+  1. Die simulierte Uhr. Die Trainingsdaten tragen `sim_hour` aus der virtuellen
+     Uhr des Simulators. Diese läuft 15-fach beschleunigt und startet bei jedem
+     Neustart von oracle_writer.py neu. Die reale Uhrzeit ist KEIN Ersatz -
+     sonst wird auf der einen Uhr trainiert und auf der anderen prognostiziert.
+     forecast_model.current_sim_hour() rekonstruiert sie aus der jüngsten Zeile
+     der Historie.
 
-  2. Slot alignment. OracleStorage.currentSlot follows block.timestamp, not the
-     number of updateSlot() calls, so slots skip whenever an oracle_writer pass
-     overruns 60s. Never assume next == current + 1; track submitted slots and
-     reconcile them when their meter data actually shows up.
+  2. Slot-Ausrichtung. OracleStorage.currentSlot folgt block.timestamp, nicht der
+     Anzahl der updateSlot()-Aufrufe. Slots werden also übersprungen, sobald ein
+     Durchlauf von oracle_writer.py länger als 60s dauert. Niemals annehmen,
+     dass der nächste Slot == aktueller + 1 ist: eingereichte Slots werden
+     gemerkt und erst dann abgeglichen, wenn ihre Messwerte tatsächlich
+     on-chain stehen.
 
-Prerequisites:
-  - oracle_writer.py running (fills data/history.db and OracleStorage)
-  - .env with AI_PRIVATE_KEY, funded with Sepolia ETH
-  - that address authorised via IncentiveController.authorizeAI()
-  - web3 >= 7  (v6 uses rawTransaction / geth_poa_middleware and will not work)
+Voraussetzungen:
+  - oracle_writer.py läuft (füllt data/history.db und OracleStorage)
+  - .env mit AI_PRIVATE_KEY, ausgestattet mit Sepolia-ETH
+  - diese Adresse ist via IncentiveController.authorizeAI() autorisiert
+  - web3 >= 7 (v6 nutzt rawTransaction / geth_poa_middleware, funktioniert nicht)
 """
 
 import json
@@ -45,17 +49,20 @@ load_dotenv()
 CONFIG_PATH = Path(__file__).parent / "config.json"
 ABI_DIR = Path(__file__).parent / "abi"
 
-# One simulated hour = 4 slots, which is the granularity the challenge asks for.
+# Eine simulierte Stunde = 4 Slots. Das ist die von der Challenge geforderte
+# Prognosegranularität (stündlich = 4-Minuten-Intervall in der Simulation).
 SLOTS_PER_SIM_HOUR = 4
 
-# Submit a forecast this many slots ahead, so the transaction is mined before
-# the slot it predicts has elapsed.
+# So viele Slots im Voraus wird prognostiziert, damit die Transaktion gemined
+# ist, bevor der prognostizierte Slot abgelaufen ist.
 FORECAST_LEAD_SLOTS = 2
 
 SLOT_SECONDS = 60
 
 PRIVATE_KEY = os.getenv("AI_PRIVATE_KEY")
 if not PRIVATE_KEY:
+    # Eigene Wallet nötig: teilen sich beide Prozesse einen Key, konkurrieren
+    # sie um dieselbe Nonce und Transaktionen gehen verloren.
     print("ERROR: AI_PRIVATE_KEY not set in .env")
     print("Use a wallet separate from ORACLE_PRIVATE_KEY - sharing one makes the")
     print("two processes race on nonces and transactions get dropped.")
@@ -63,15 +70,15 @@ if not PRIVATE_KEY:
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  On-chain helpers
+#  On-Chain-Hilfsfunktionen
 # ─────────────────────────────────────────────────────────────────────
 
 def send_tx(w3, account, fn, gas: int = 250_000) -> bool:
     """
-    Dry-runs a call, then sends it. Returns True on success.
+    Simuliert den Aufruf zuerst (Dry-Run) und sendet ihn dann. True = Erfolg.
 
-    The dry run costs nothing and turns a silent gas burn (e.g. "Not authorized
-    AI") into an immediate, readable error.
+    Der Dry-Run kostet nichts und verwandelt einen stillen Gas-Verlust
+    (z.B. "Not authorized AI") in einen sofort lesbaren Fehler.
     """
     try:
         fn.call({"from": account.address})
@@ -126,7 +133,7 @@ def main():
     balance = w3.from_wei(w3.eth.get_balance(account.address), "ether")
     print(f"Sepolia balance      : {balance} ETH")
 
-    # Fail fast rather than discovering this via a burned transaction.
+    # Früh scheitern, statt das Problem erst an einer verbrannten TX zu merken.
     if not incentive.functions.authorizedAI(account.address).call():
         print(f"\nERROR: {account.address} is not an authorised AI.")
         print("The IncentiveController owner must call authorizeAI() for it.")
@@ -135,7 +142,7 @@ def main():
         print("\nERROR: wallet has no Sepolia ETH, transactions cannot be sent.")
         sys.exit(1)
 
-    # ── train ────────────────────────────────────────────────────────
+    # ── Training ─────────────────────────────────────────────────────
 
     households = fm.load_household_config(CONFIG_PATH)
     model = fm.train_from_db(config_path=CONFIG_PATH)
@@ -146,18 +153,18 @@ def main():
     addr_of = {h_id: Web3.to_checksum_address(cfg["address"])
                for h_id, cfg in households.items()}
 
-    # slot -> households whose actuals are still outstanding
+    # Slot -> Haushalte, deren Ist-Werte noch ausstehen
     pending: Dict[int, Set[str]] = {}
     last_forecast_slot = -SLOTS_PER_SIM_HOUR
 
-    # ── loop ─────────────────────────────────────────────────────────
+    # ── Hauptschleife ────────────────────────────────────────────────
 
     while True:
         cycle_start = time.time()
         try:
             current_slot = oracle.functions.getCurrentSlot().call()
 
-            # ---- forecast, once per simulated hour ----
+            # ---- Prognose, einmal pro simulierter Stunde ----
             if current_slot - last_forecast_slot >= SLOTS_PER_SIM_HOUR:
                 target_slot = current_slot + FORECAST_LEAD_SLOTS
                 sim_now = fm.current_sim_hour()
@@ -183,12 +190,12 @@ def main():
                     pending[target_slot] = submitted
                 last_forecast_slot = current_slot
 
-            # ---- reconcile actuals for elapsed slots ----
-            # A forecast must exist before its actual, otherwise
-            # _updateScoreForSlot() returns early and scoring silently no-ops.
+            # ---- Ist-Werte abgelaufener Slots nachreichen ----
+            # Die Prognose muss vor dem Ist-Wert on-chain stehen, sonst bricht
+            # _updateScoreForSlot() früh ab und es wird still nichts bewertet.
             for slot in sorted(pending):
                 if slot >= current_slot:
-                    continue  # not finished yet
+                    continue  # Slot läuft noch
 
                 still_waiting: Set[str] = set()
                 for h_id in sorted(pending[slot]):
@@ -196,8 +203,9 @@ def main():
                         addr_of[h_id], slot).call()
                     cons_wh, prod_wh = reading[0], reading[1]
                     if cons_wh == 0 and prod_wh == 0:
-                        # Slot was skipped by the oracle writer - no data was
-                        # ever written for it, so there is nothing to settle.
+                        # Slot wurde vom Oracle-Writer übersprungen - es wurden
+                        # nie Messwerte geschrieben, also gibt es nichts zu
+                        # bewerten.
                         continue
                     print(f"  actual slot {slot} {h_id}: "
                           f"cons={cons_wh}Wh prod={prod_wh}Wh")
@@ -211,7 +219,8 @@ def main():
                     del pending[slot]
 
         except RuntimeError as e:
-            # Raised by current_sim_hour() when history.db has gone stale.
+            # Wird von current_sim_hour() geworfen, wenn history.db veraltet ist
+            # (= oracle_writer.py läuft nicht).
             print(f"  {e}")
         except Exception as e:
             print(f"  error: {e}")

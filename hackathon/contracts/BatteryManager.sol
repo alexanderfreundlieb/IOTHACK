@@ -111,6 +111,9 @@ contract BatteryManager is IBatteryManager {
         owner = msg.sender;
     }
 
+    /// @notice Stellt einen Haushalt unter Batterie-Verwaltung.
+    /// @dev Nur verwaltete Haushalte akzeptiert decideAction(); reine
+    ///      Konsumenten ohne Batterie liefern dort IDLE statt zu reverten.
     function addHousehold(address household) external {
         require(msg.sender == owner, "Only owner");
         require(!isManaged[household], "Already managed");
@@ -224,7 +227,7 @@ contract BatteryManager is IBatteryManager {
 
         if (netWh < 0) {
             // Defizit -> zuerst aus der Batterie decken, statt am Markt zuzukaufen.
-            // Das Wetter wird erst hier gelesen: nur der Entlade-Boden haengt
+            // Das Wetter wird erst hier gelesen: nur der Entlade-Boden hängt
             // davon ab, und settleSlot() ruft das pro Haushalt auf (Gas sparen).
             uint256 reserveSoc = _reserveSoc(oracle.getLatestWeather());
             if (bs.socPercent <= reserveSoc) {
@@ -267,10 +270,12 @@ contract BatteryManager is IBatteryManager {
     //  View Functions
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Letzte protokollierte Entscheidung inklusive Slot und Zeitstempel.
     function getLastDecision(address household) external view returns (Decision memory) {
         return lastDecision[household];
     }
 
+    /// @notice Alle Haushalte, deren Batterie dieser Contract steuert.
     function getManagedHouseholds() external view returns (address[] memory) {
         return managedHouseholds;
     }

@@ -8,17 +8,29 @@ import "./interfaces/IIncentiveController.sol";
 
 /**
  * @title P2PEnergyMarket
- * @notice Phase 1: Direkter Energiehandel zwischen Haushalten.
- * @dev STARTER-CODE - Teams implementieren die TODO-Blöcke.
+ * @notice Phase 1: Direkter Peer-to-Peer-Energiehandel zwischen Haushalten,
+ *         abgerechnet in einem ERC-20-Stablecoin - ohne Intermediär.
  *
- *      Logik (Beispiel-Vorschlag):
- *        1. Pro Slot: Lese alle Meter-Daten aus dem Oracle
- *        2. Berechne pro Haushalt: Überschuss = produktion - verbrauch
- *        3. Matche Produzenten (Überschuss > 0) mit Konsumenten (Defizit)
- *        4. Transferiere Stablecoin von Konsument an Produzent
+ * @dev Zentraler Contract des Systems. Ablauf je Abrechnungsslot (settleSlot()):
+ *        1. Slot-Nummer aus dem OracleStorage lesen, Doppelabrechnung ausschliessen
+ *        2. Pro Haushalt Netto = Erzeugung - Verbrauch aus den Meter-Daten bilden
+ *        3. [Phase 2, optional] Batterie-Entscheidung auf das Netto anrechnen
+ *        4. Haushalte in Produzenten (Netto > 0) und Konsumenten (Netto < 0) teilen
+ *        5. Proportionales Matching: jeder Produzent liefert anteilig an jeden Konsumenten
+ *        6. Pro Match Stablecoin vom Konsumenten an den Produzenten transferieren
+ *           ([Phase 3, optional] Preis skaliert mit dem Reputationsscore des Käufers)
  *
- *      Wichtig: Konsumenten müssen vorab approve() auf den Stablecoin aufrufen,
+ *      Wichtig: Konsumenten müssen vorab approve() auf dem Stablecoin aufrufen,
  *               damit der Contract Tokens in ihrem Namen transferieren kann.
+ *
+ *      Sicherheitsmodell: Die Datenhoheit liegt beim OracleStorage - nur dort
+ *      autorisierte Oracle-Adressen können Messwerte einspeisen. Registrierung
+ *      und Preis sind owner-geschützt; settleSlot() selbst ist bewusst
+ *      permissionless, da es nur bereits on-chain stehende Daten verarbeitet
+ *      und jeden Slot höchstens einmal abrechnet.
+ *
+ *      Transparenz: Jeder Handel erzeugt ein `EnergyTraded`-Event, jeder Slot
+ *      zusätzlich ein `SlotSettled`-Event.
  */
 contract P2PEnergyMarket {
 
@@ -136,68 +148,43 @@ contract P2PEnergyMarket {
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * @notice Rechnet einen Slot ab: matched Produzenten mit Konsumenten,
-     *         transferiert Stablecoin entsprechend.
+     * @notice Rechnet den aktuellen Slot ab: matched Produzenten mit
+     *         Konsumenten und transferiert den Stablecoin entsprechend.
      *
-     *  TODO (Teams):
-     *    1. Hole currentSlot vom Oracle und prüfe, dass er > lastSettledSlot ist
-     *    2. Iteriere über alle households:
-     *       - Lese MeterReading via oracle.getLatestMeterReading()
-     *       - Berechne netto (production - consumption)
-     *       - [Phase 2, optional] Falls batteryManager gesetzt ist (siehe Feld
-     *         oben + setBatteryManager()): passt netto VOR der Klassifizierung
-     *         in Produzent/Konsument an, damit Handel und Batterie-Strategie
-     *         konsistent sind, statt parallel und widersprüchlich zu laufen:
+     * @dev Wird von `settlement_trigger.py` einmal pro Slot (= 1 reale Minute)
+     *      aufgerufen. Bewusst ohne Zugriffsschutz: der Contract rechnet
+     *      ausschliesslich mit Daten, die autorisierte Oracles zuvor in den
+     *      OracleStorage geschrieben haben, und `lastSettledSlot` verhindert
+     *      eine zweite Abrechnung desselben Slots.
      *
-     *           if (address(batteryManager) != address(0)
-     *               && batteryManager.isManaged(household)) {
-     *               try batteryManager.decideAction(household)
-     *                   returns (IBatteryManager.Action action, uint256 amountWh) {
-     *                   if (action == IBatteryManager.Action.CHARGE) {
-     *                       netto -= int256(amountWh);   // Haushalt behält Energie für Batterie
-     *                   } else if (action == IBatteryManager.Action.DISCHARGE) {
-     *                       netto += int256(amountWh);   // Batterie liefert zusätzlich Energie
-     *                   }
-     *               } catch {
-     *                   // Batterie-Call fehlgeschlagen -> ignorieren, Handel läuft
-     *                   // ungestört mit dem ursprünglichen netto weiter
-     *               }
-     *           }
+     *      Matching-Regel (proportionale Verteilung):
+     *          flow(i -> j) = surplus_i * deficit_j / totalDeficit
+     *      Jeder Produzent i liefert damit an jeden Konsumenten j anteilig zu
+     *      dessen Defizit. Eine ausgeglichene Energiebilanz wird NICHT verlangt:
+     *      Energie kann ungenutzt bleiben, deshalb ist die Bilanzprüfung
+     *      auskommentiert.
      *
-     *         Wichtig: nicht jeder Haushalt hat zwingend eine verwaltete Batterie
-     *         (z.B. reine Konsumenten) - deshalb zuerst isManaged() prüfen, sonst
-     *         revertet decideAction() und blockiert den ganzen Slot für alle.
-     *         decideAction() wird hier bewusst live innerhalb derselben Transaktion
-     *         aufgerufen (nicht vorher separat getriggert) - so ist garantiert, dass
-     *         die Entscheidung zum selben Slot gehört wie die Meter-Daten, die ihr
-     *         gerade handelt, statt eine veraltete Entscheidung vom Vor-Slot zu lesen.
-     *       - Sammle Überschüsse und Defizite
-     *    3. Matche Produzenten mit Konsumenten
-     *       (einfache Strategie: proportional verteilen)
-     *    4. Pro Match: berechne Betrag = energieWh * effektiverPreisProKwh / 1000
-     *       (Wattstunden -> Kilowattstunden)
-     *       - [Phase 3, optional] Falls incentiveController gesetzt ist (siehe
-     *         Feld oben + setIncentiveController()): passt den Preis für den
-     *         KONSUMENTEN (Käufer) an, bevor ihr den Betrag berechnet:
+     *      Phase 2 (aktiv, sobald setBatteryManager() gesetzt ist):
+     *      decideAction() wird live in derselben Transaktion aufgerufen, damit
+     *      Entscheidung und Meter-Daten garantiert zum selben Slot gehören.
+     *      CHARGE verringert das handelbare Netto (Energie bleibt im Haushalt),
+     *      DISCHARGE erhöht es. isManaged() wird vorher geprüft, weil
+     *      decideAction() für nicht verwaltete Haushalte revertet und sonst den
+     *      Slot für alle blockieren würde.
      *
-     *           uint256 pricePerKwh = energyPricePerKwh;
-     *           if (address(incentiveController) != address(0)) {
-     *               uint256 multiplier = incentiveController.getPriceMultiplier(consumer);
-     *               pricePerKwh = (energyPricePerKwh * multiplier) / 1000;
-     *           }
+     *      Phase 3 (aktiv, sobald setIncentiveController() gesetzt ist):
+     *      der Preis wird pro Trade in _executeTrade() mit dem Multiplikator des
+     *      KONSUMENTEN skaliert (guter Prognose-Score = günstigerer Einkauf).
      *
-     *         getPriceMultiplier() ist `view` (kein State-Change) - anders als
-     *         batteryManager.decideAction() oben braucht ihr hier kein try/catch,
-     *         der Call kann nicht versehentlich Storage kaputt machen.
-     *         Multiplikator gilt bewusst für den Konsumenten, nicht den Produzenten
-     *         (siehe IncentiveController.getPriceMultiplier(): 1000=neutral,
-     *         <1000=Rabatt, >1000=Aufschlag - abhängig von dessen eigener
-     *         Prognose-Genauigkeit als "Käufer").
-     *    5. Transferiere via stablecoin.transferFrom(consumer, producer, amount)
-     *       (Konsumenten müssen vorher approve() aufgerufen haben!)
-     *    6. Emit EnergyTraded für jeden Match
-     *    7. Setze lastSettledSlot auf currentSlot
-     *    8. Emit SlotSettled
+     *      Reentrancy: `lastSettledSlot` wird VOR der Transfer-Schleife gesetzt
+     *      (Checks-Effects-Interactions), damit ein bösartiger Token-Callback
+     *      settleSlot() nicht erneut für denselben Slot betreten kann.
+     *
+     *      Robustheit: jeder einzelne Trade läuft in try/catch. Ein fehlendes
+     *      oder zu niedriges approve() eines Konsumenten lässt damit nur diesen
+     *      einen Trade ausfallen, nicht den gesamten Slot.
+     *
+     *      Emittiert `EnergyTraded` pro Match und `SlotSettled` am Slot-Ende.
      */
     function settleSlot() external {
 
@@ -218,8 +205,8 @@ contract P2PEnergyMarket {
 
             // Phase 2: Batterie-Entscheidung VOR der Klassifizierung einrechnen,
             // damit Handel und Batterie-Strategie konsistent sind.
-            // isManaged() zuerst pruefen: decideAction() revertet für nicht
-            // verwaltete Haushalte und wuerde sonst den Slot für alle blockieren.
+            // isManaged() zuerst prüfen: decideAction() revertet für nicht
+            // verwaltete Haushalte und würde sonst den Slot für alle blockieren.
             if (address(batteryManager) != address(0)
                 && batteryManager.isManaged(household)) {
                 try batteryManager.decideAction(household)
@@ -231,7 +218,7 @@ contract P2PEnergyMarket {
                     }
                 } catch {
                     // Batterie-Call fehlgeschlagen -> ignorieren, der Handel
-                    // läuft mit dem urspruenglichen Netto weiter.
+                    // läuft mit dem ursprünglichen Netto weiter.
                 }
             }
         }
@@ -281,7 +268,7 @@ contract P2PEnergyMarket {
 
         // removed for now since energy balance may not always zero out, since energy can also just be lost/not used."
         // require(totalSurplus == totalDeficit, "Energy produced and consumed does not zero out");
-        totalSurplus;   // nur für die (auskommentierte) Bilanzpruefung oben
+        totalSurplus;   // nur für die (auskommentierte) Bilanzprüfung oben
                         // Ende Klassifizierungs-Block: netProduction/totalSurplus sind ab hier weg
 
         // flow(i → j) = surplus_i × (deficit_j / total_deficit)
@@ -315,7 +302,7 @@ contract P2PEnergyMarket {
                     totalEnergyTraded += flowWh;
                     totalAmountPaid += amountPaid;
                 } catch {
-                    // dieser Trade fehlgeschlagen -> ueberspringen, Rest des
+                    // dieser Trade fehlgeschlagen -> überspringen, Rest des
                     // Slots wird trotzdem abgerechnet
                 }
 
@@ -326,8 +313,8 @@ contract P2PEnergyMarket {
         emit SlotSettled(lastSettledSlot, totalEnergyTraded, totalAmountPaid);
     }
 
-    /// @dev Fuehrt einen einzelnen Match aus: Preis berechnen, Token
-    ///      transferieren, Event emittieren. Rueckgabe = bezahlter Betrag.
+    /// @dev Führt einen einzelnen Match aus: Preis berechnen, Token
+    ///      transferieren, Event emittieren. Rückgabe = bezahlter Betrag.
     function _executeTrade(
         address producer,
         address consumer,
@@ -336,9 +323,9 @@ contract P2PEnergyMarket {
         require(msg.sender == address(this), "internal only");
 
         // Step 4: energyWh * pricePerKwh / 1000  (Wh -> kWh conversion).
-        // Phase 3: der Incentive-Multiplikator gilt fuer den KONSUMENTEN
-        // (Kaeufer), nicht den Produzenten - siehe IncentiveController.
-        // getPriceMultiplier() ist `view`, daher kein try/catch noetig wie bei
+        // Phase 3: der Incentive-Multiplikator gilt für den KONSUMENTEN
+        // (Käufer), nicht den Produzenten - siehe IncentiveController.
+        // getPriceMultiplier() ist `view`, daher kein try/catch nötig wie bei
         // batteryManager.decideAction() oben.
         uint256 pricePerKwh = energyPricePerKwh;
         if (address(incentiveController) != address(0)) {
@@ -371,7 +358,7 @@ contract P2PEnergyMarket {
     /// @notice Helper: Berechnet den Token-Betrag zum Basispreis (ohne Incentive).
     /// @dev _executeTrade() ruft dies NICHT auf, sondern rechnet mit dem
     ///      konsumentenspezifischen Preis - diese Funktion bleibt als
-    ///      Vorschau-/UI-Helfer fuer den unveraenderten Basispreis stehen.
+    ///      Vorschau-/UI-Helfer für den unveränderten Basispreis stehen.
     function calculateCost(uint256 energyWh) public view returns (uint256) {
         // Wh -> kWh -> Token (mit Decimals)
         return (energyWh * energyPricePerKwh) / 1000;

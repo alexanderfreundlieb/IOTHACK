@@ -91,6 +91,12 @@ class EnergySimulator:
     # ─────────────────────────────────────────────────────────────
 
     def _init_db(self):
+        """Legt die SQLite-Tabellen an, falls sie noch nicht existieren.
+
+        Die Historie ist die Trainingsgrundlage für Phase 3: `sim_hour` und
+        `sim_dayofweek` werden mitgeschrieben, weil sich die simulierte Uhr
+        nicht aus dem Zeitstempel rekonstruieren lässt.
+        """
         DB_PATH.parent.mkdir(exist_ok=True)
         with sqlite3.connect(DB_PATH) as conn:
             conn.executescript("""
@@ -129,6 +135,7 @@ class EnergySimulator:
         return sim_hours % 24
 
     def get_simulated_dayofweek(self) -> int:
+        """Simulierter Wochentag (0-6) - Kalendermerkmal für die Prognose."""
         elapsed_real_seconds = time.time() - self.start_real_time
         sim_days = elapsed_real_seconds / 60.0 * (SIM_MINUTES_PER_SLOT / 60.0) / 24.0
         return int(sim_days) % 7
@@ -138,6 +145,12 @@ class EnergySimulator:
     # ─────────────────────────────────────────────────────────────
 
     def _generate_weather(self, sim_hour: float) -> WeatherReading:
+        """Erzeugt Strahlung, Temperatur und Bewölkung für die simulierte Stunde.
+
+        Strahlung folgt einem Sinus-Tagesgang (0 vor 06:00 und nach 20:00) und
+        wird durch die Bewölkung gedämpft; Bewölkung und Temperatur schwanken
+        langsam plus Rauschen.
+        """
         weather_cfg = self.config["weather"]
 
         # Strahlung: Sinus-Kurve, Maximum 13:00, 0 vor 6:00 und nach 20:00
@@ -279,6 +292,7 @@ class EnergySimulator:
     # ─────────────────────────────────────────────────────────────
 
     def _persist_reading(self, reading: HouseholdReading, sim_hour: float):
+        """Schreibt einen Haushalts-Messwert in die Historien-Datenbank."""
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 "INSERT INTO meter_history(household_id, timestamp, consumption_wh, "
@@ -289,6 +303,7 @@ class EnergySimulator:
             )
 
     def _persist_weather(self, weather: WeatherReading, sim_hour: float):
+        """Schreibt den Wetter-Messwert des Slots in die Historien-Datenbank."""
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 "INSERT INTO weather_history(timestamp, irradiance, temperature_c_x10, "

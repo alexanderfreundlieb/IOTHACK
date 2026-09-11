@@ -78,16 +78,25 @@ contract OracleStorage is IOracleStorage {
     //  Admin
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Erlaubt einer Adresse das Schreiben von Messwerten.
+    /// @dev Erfüllt die Challenge-Anforderung "nur autorisierte Oracle-Adressen
+    ///      dürfen Daten einspeisen".
     function authorizeOracle(address oracle) external onlyOwner {
         authorizedOracles[oracle] = true;
         emit OracleAuthorized(oracle);
     }
 
+    /// @notice Entzieht einer Adresse das Schreibrecht wieder.
     function revokeOracle(address oracle) external onlyOwner {
         authorizedOracles[oracle] = false;
         emit OracleRevoked(oracle);
     }
 
+    /// @notice Meldet einen Haushalt an; erst danach nimmt der Oracle Messwerte
+    ///         für ihn entgegen.
+    /// @dev Wird von `oracle_writer.py` beim Start für jeden Haushalt aus
+    ///      config.json aufgerufen. P2PEnergyMarket.registerHousehold() prüft
+    ///      gegen diese Liste.
     function registerHousehold(address household) external onlyOracle {
         registeredHouseholds[household] = true;
         emit HouseholdRegistered(household);
@@ -97,10 +106,18 @@ contract OracleStorage is IOracleStorage {
     //  Schreibfunktionen (nur Oracle)
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Setzt den Slot-Zähler auf den aus der Blockzeit abgeleiteten Wert.
+    /// @dev `currentSlot` folgt block.timestamp, NICHT der Anzahl der Aufrufe.
+    ///      Dauert ein Oracle-Durchlauf länger als SLOT_DURATION, springt der
+    ///      Zähler - Aufrufer dürfen sich nicht auf lückenlose Slots verlassen.
     function updateSlot() external onlyOracle {
         currentSlot = (block.timestamp - startTimestamp) / SLOT_DURATION;
     }
 
+    /// @notice Schreibt Smart-Meter- und PV-Daten eines Haushalts für den
+    ///         aktuellen Slot (Phase 1).
+    /// @dev Schreibt sowohl den Letztwert als auch die Historie unter
+    ///      `meterHistory[household][currentSlot]` (Basis für Phase 3).
     function updateMeter(
         address household,
         uint256 consumptionWh,
@@ -117,6 +134,10 @@ contract OracleStorage is IOracleStorage {
         emit MeterUpdated(household, currentSlot, consumptionWh, productionWh);
     }
 
+    /// @notice Schreibt den Batteriezustand eines Haushalts (Phase 2).
+    /// @param socPercent Ladestand in Prozent (0-100), wird validiert.
+    /// @dev Emittiert `BatteryUpdated` - zusammen mit den DecisionMade-Events des
+    ///      BatteryManagers ergibt das den Ladestand-Verlauf über die Zeit.
     function updateBattery(
         address household,
         uint256 socPercent,
@@ -134,6 +155,9 @@ contract OracleStorage is IOracleStorage {
         emit BatteryUpdated(household, currentSlot, socPercent);
     }
 
+    /// @notice Schreibt die gemeinsamen Wetterdaten des aktuellen Slots (Phase 2).
+    /// @dev Wetter gilt für alle Haushalte gemeinsam, daher nur ein Datensatz.
+    ///      In der Simulation stündlich aktualisiert (= 4-Minuten-Intervall).
     function updateWeather(
         uint256 irradianceWm2,
         int256 temperatureC,
@@ -173,6 +197,10 @@ contract OracleStorage is IOracleStorage {
         return registeredHouseholds[household];
     }
 
+    /// @notice Historischer Messwert eines Haushalts zu einem bestimmten Slot.
+    /// @dev Wird von `ai_forecast.py` genutzt, um den Ist-Wert eines abgelaufenen
+    ///      Slots nachzureichen. Ein Ergebnis mit lauter Nullen bedeutet, dass
+    ///      der Slot übersprungen wurde.
     function getMeterAtSlot(address household, uint256 slot) external view returns (MeterReading memory) {
         return meterHistory[household][slot];
     }
