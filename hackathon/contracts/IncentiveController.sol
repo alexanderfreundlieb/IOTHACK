@@ -53,6 +53,19 @@ contract IncentiveController is IIncentiveController {
     /// @notice Reputationsscore pro Haushalt (0-1000, Start: 500)
     mapping(address => uint256) public reputationScore;
 
+    /// @notice Haushalt hat einen Score erhalten.
+    /// @dev Notwendig, weil score==0 ein gueltiger (schlechtester) Score ist.
+    ///      Ohne dieses Flag wuerde "0" gleichzeitig "neu" bedeuten und ein
+    ///      maximal schlecht bewerteter Haushalt bekaeme beim naechsten
+    ///      submitForecast() den Startwert 500 zurueck - eine Gratis-Amnestie.
+    mapping(address => bool) public initialized;
+
+    /// @notice Slot wurde fuer diesen Haushalt bereits bewertet.
+    /// @dev Macht die Bewertung idempotent: ein wiederholtes submitActual()
+    ///      (z.B. Retry nach einem Timeout, obwohl die TX doch durchging)
+    ///      darf den Score nicht ein zweites Mal veraendern.
+    mapping(address => mapping(uint256 => bool)) public scored;
+
     /// @notice Basispreis-Multiplikator in Promille (1000 = 100%, also normaler Preis)
     uint256 public constant BASE_MULTIPLIER = 1000;
 
@@ -61,6 +74,30 @@ contract IncentiveController is IIncentiveController {
 
     /// @notice Maximaler Aufschlag: 200 Promille = 20%
     uint256 public constant MAX_PENALTY = 200;
+
+    /// @notice Score-Grenzen und Startwert
+    uint256 public constant MAX_SCORE = 1000;
+    uint256 public constant INITIAL_SCORE = 500;
+
+    /// @notice Abweichung (Promille), bis zu der belohnt wird: 100 = 10%.
+    /// @dev Kalibriert auf das Rauschen der Simulation. Der Verbrauch wird mit
+    ///      uniform(0.85, 1.15) multipliziert, was rund 8% mittlere Abweichung
+    ///      erzeugt - selbst eine perfekte Prognose kann nicht darunter kommen.
+    ///      Ein Band von 10% ist damit knapp ueber dem Rauschboden: erreichbar
+    ///      mit guter Prognose, aber nicht geschenkt.
+    uint256 public constant TIGHT_BAND = 100;
+
+    /// @notice Abweichung (Promille), ab der bestraft wird: 250 = 25%.
+    uint256 public constant LOOSE_BAND = 250;
+
+    /// @notice Score-Aenderung pro bewertetem Slot.
+    /// @dev Bewusst asymmetrisch (Strafe doppelt so hoch wie Belohnung): mit
+    ///      einer brauchbaren Prognose liegen die meisten Slots im Belohnungs-
+    ///      band, und ein symmetrisches Update wuerde alle Haushalte binnen
+    ///      weniger Stunden auf MAX_SCORE festnageln - der Unterschied zwischen
+    ///      den Haushalten, den das Incentive sichtbar machen soll, verschwaende.
+    uint256 public constant SCORE_REWARD = 30;
+    uint256 public constant SCORE_PENALTY = 60;
 
     // ─────────────────────────────────────────────────────────────
     //  Events
@@ -116,9 +153,10 @@ contract IncentiveController is IIncentiveController {
             timestamp: block.timestamp
         });
 
-        // Initial-Score auf 500 setzen, falls noch keiner existiert
-        if (reputationScore[household] == 0) {
-            reputationScore[household] = 500;
+        // Startwert nur einmal setzen - siehe `initialized`.
+        if (!initialized[household]) {
+            initialized[household] = true;
+            reputationScore[household] = INITIAL_SCORE;
         }
 
         emit ForecastSubmitted(household, slot, expectedConsumptionWh);
@@ -146,42 +184,52 @@ contract IncentiveController is IIncentiveController {
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * @notice Aktualisiert den Reputationsscore basierend auf der Abweichung.
+     * @notice Aktualisiert den Reputationsscore basierend auf der Abweichung
+     *         zwischen Prognose und tatsaechlichem Verbrauch.
      *
-     *  TODO (Teams):
-     *    1. Hole forecast und actual für (household, slot)
-     *    2. Berechne Abweichung in Promille:
-     *       deviation = |actual - forecast| * 1000 / forecast
-     *    3. Wende eine Score-Update-Strategie an, z.B.:
-     *         - deviation < 100 (10%):  score += 20  (bis max 1000)
-     *         - deviation 100-250:      score += 0   (neutral)
-     *         - deviation > 250:        score -= 30  (min 0)
-     *    4. Emit ScoreUpdated mit der Abweichung
+     * @dev Bewertet wird ausschliesslich der VERBRAUCH, nicht die PV-Erzeugung.
+     *      Begruendung: das Incentive soll Verhalten belohnen, das der Haushalt
+     *      steuern kann. Die Erzeugung haengt an der Einstrahlung und damit am
+     *      Wetter - ein Haushalt fuer Wolken zu bestrafen waere oekonomisch
+     *      sinnlos und wuerde PV-Besitzer systematisch benachteiligen, weil die
+     *      Wetterprognose deutlich ungenauer ist als die Lastprognose.
+     *      Die Erzeugungsprognose wird weiterhin on-chain festgehalten (fuer
+     *      Nachvollziehbarkeit), fliesst aber nicht in den Score ein.
      *
-     *  Alternative Designs (für Bonuspunkte):
-     *    - Exponentielle Strafe für grosse Abweichungen
-     *    - Score-Decay über Zeit (Verfall ohne Aktivität)
-     *    - Community-Score: Mittelwert über Gruppe statt einzeln
+     *      Der Nenner (erwarteter Verbrauch) wird nie klein: das niedrigste
+     *      Lastprofil der Simulation liegt bei rund 40 Wh pro Slot. Eine
+     *      Normierung auf eine kuenstliche Referenz ist deshalb nicht noetig.
      */
     function _updateScoreForSlot(address household, uint256 slot) internal {
         Forecast memory f = forecasts[household][slot];
         Actual memory a = actuals[household][slot];
 
+        // Ohne Prognose gibt es nichts zu bewerten. Wichtig fuer die Reihenfolge:
+        // submitForecast() muss vor submitActual() fuer denselben Slot kommen.
         if (f.timestamp == 0 || f.expectedConsumptionWh == 0) return;
+
+        // Slot wurde vom Oracle uebersprungen - es existieren keine Messwerte.
         if (a.actualConsumptionWh == 0 && a.actualProductionWh == 0) return;
 
-        // TODO: Implementierung durch Team
-        //
-        // uint256 deviation = _calculateDeviation(f.expectedConsumptionWh, a.actualConsumptionWh);
-        // uint256 currentScore = reputationScore[household];
-        //
-        // if (deviation < 100) {
-        //     reputationScore[household] = _min(currentScore + 20, 1000);
-        // } else if (deviation > 250) {
-        //     reputationScore[household] = currentScore > 30 ? currentScore - 30 : 0;
-        // }
-        //
-        // emit ScoreUpdated(household, reputationScore[household], deviation);
+        // Jeden Slot nur einmal bewerten.
+        if (scored[household][slot]) return;
+        scored[household][slot] = true;
+
+        uint256 deviation = _calculateDeviation(
+            f.expectedConsumptionWh,
+            a.actualConsumptionWh
+        );
+
+        uint256 score = reputationScore[household];
+        if (deviation < TIGHT_BAND) {
+            score = _min(score + SCORE_REWARD, MAX_SCORE);
+        } else if (deviation > LOOSE_BAND) {
+            score = score > SCORE_PENALTY ? score - SCORE_PENALTY : 0;
+        }
+        // Dazwischen: neutrale Zone, Score bleibt unveraendert.
+
+        reputationScore[household] = score;
+        emit ScoreUpdated(household, score, deviation);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -192,29 +240,24 @@ contract IncentiveController is IIncentiveController {
      * @notice Gibt den Preismultiplikator für einen Haushalt zurück.
      * @return multiplier in Promille (1000 = neutral, <1000 = Rabatt für Käufer)
      *
-     *  TODO (Teams):
-     *    - Mappe den Reputationsscore auf einen Multiplikator
-     *    - Beispiel: score 1000 → multiplier 800 (20% Rabatt)
-     *                score 500  → multiplier 1000 (neutral)
-     *                score 0    → multiplier 1200 (20% Aufschlag)
+     * @dev Lineare Interpolation zwischen 800 und 1200:
+     *        score 1000 -> 800  (20% Rabatt)
+     *        score  500 -> 1000 (neutral)
+     *        score    0 -> 1200 (20% Aufschlag)
+     *
+     *      Ein Haushalt ohne jede Prognose bleibt bewusst neutral statt bestraft
+     *      zu werden - fehlende Daten sind kein Fehlverhalten.
      */
     function getPriceMultiplier(address household) external view returns (uint256 multiplier) {
-        // TODO: Implementierung durch Team
-        //
-        // uint256 score = reputationScore[household];
-        // if (score == 0) return BASE_MULTIPLIER; // Neuer Haushalt: neutral
-        //
-        // // Lineare Interpolation zwischen 800 und 1200
-        // // score=1000 -> 800, score=500 -> 1000, score=0 -> 1200
-        // if (score >= 500) {
-        //     uint256 discount = ((score - 500) * MAX_DISCOUNT) / 500;
-        //     return BASE_MULTIPLIER - discount;
-        // } else {
-        //     uint256 penalty = ((500 - score) * MAX_PENALTY) / 500;
-        //     return BASE_MULTIPLIER + penalty;
-        // }
+        if (!initialized[household]) return BASE_MULTIPLIER;
 
-        return BASE_MULTIPLIER; // Default: kein Incentive aktiv
+        uint256 score = reputationScore[household];
+        if (score >= INITIAL_SCORE) {
+            uint256 discount = ((score - INITIAL_SCORE) * MAX_DISCOUNT) / INITIAL_SCORE;
+            return BASE_MULTIPLIER - discount;
+        }
+        uint256 penalty = ((INITIAL_SCORE - score) * MAX_PENALTY) / INITIAL_SCORE;
+        return BASE_MULTIPLIER + penalty;
     }
 
     // ─────────────────────────────────────────────────────────────
