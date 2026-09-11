@@ -36,6 +36,12 @@ if not PRIVATE_KEY:
 
 
 def main():
+    """Ruft in einer Endlosschleife jede Minute settleSlot() auf.
+
+    Ein Fehler beendet die Schleife nicht: ein einzelner fehlgeschlagener Slot
+    (z.B. weil das Oracle den Slot-Zähler noch nicht erhöht hat) wird geloggt,
+    danach läuft der nächste Versuch.
+    """
     with open(CONFIG_PATH) as f:
         config = json.load(f)
 

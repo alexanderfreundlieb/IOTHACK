@@ -1,24 +1,29 @@
 """
 forecast_model.py
 
-Training pipeline for the Phase-3 load/PV forecast.
+Trainings-Pipeline für die Last- und PV-Prognose aus Phase 3.
 
-Design rationale (see PHASE3_DESIGN.md):
-  - Consumption is a step function of the simulated hour, so a per-bin mean is
-    the optimal estimator. Targets are normalised by the household's baseline
-    so all households train one shared shape instead of four sparse ones.
-  - Production is linear in irradiance through the origin, so it needs a single
-    slope, not a regression with an intercept.
-  - History is written by repeated simulator runs; the simulated clock resets on
-    every restart. Rows are therefore grouped into sessions, and validation
-    holds out whole sessions - a random split leaks because consecutive slots
-    inside one bin are near-duplicates.
+Modellwahl und Begründung (Details: docs/PHASE3_AI_INCENTIVE.md):
+  - Der Verbrauch ist im Simulator eine Treppenfunktion der simulierten
+    Tageszeit. Der Mittelwert je Stunden-Bin ist damit der optimale Schätzer -
+    ein LSTM oder XGBoost hätte hier nichts zu lernen, was über den Bin-Mittel-
+    wert hinausgeht. Die Zielwerte werden auf die Grundlast des Haushalts
+    normiert, damit alle Haushalte gemeinsam EINE Tagesform trainieren statt
+    vier dünn besetzte.
+  - Die PV-Erzeugung ist linear in der Einstrahlung und geht durch den Ursprung
+    (kein Licht = keine Erzeugung). Sie braucht deshalb nur eine Steigung, keine
+    Regression mit Achsenabschnitt.
+  - Die Historie entsteht aus wiederholten Simulator-Läufen; die simulierte Uhr
+    springt bei jedem Neustart zurück. Zeilen werden deshalb zu Sessions
+    gruppiert, und die Validierung hält ganze Sessions zurück - ein zufälliger
+    Split würde lecken, weil aufeinanderfolgende Slots im selben Bin nahezu
+    identisch sind.
 
-Pure standard library on purpose: no numpy/sklearn needed, so this runs against
-data/history.db as-is.
+Bewusst nur Standardbibliothek: kein numpy/sklearn nötig, das Skript läuft
+direkt gegen data/history.db.
 
-Usage:
-    python forecast_model.py            # train + validation report
+Aufruf:
+    python forecast_model.py            # Training + Validierungsreport
 """
 
 import json
@@ -32,20 +37,21 @@ from typing import Dict, List, Optional, Tuple
 CONFIG_PATH = Path(__file__).parent / "config.json"
 DB_PATH = Path(__file__).parent.parent / "data" / "history.db"
 
-# Mirrors data_simulator.SIM_MINUTES_PER_SLOT / 60
+# Spiegelt data_simulator.SIM_MINUTES_PER_SLOT / 60: ein Slot deckt eine
+# Viertel-Simulationsstunde ab.
 SLOT_FRACTION_OF_HOUR = 0.25
 
-# The simulated clock advances 15 simulated minutes per real minute.
+# Die simulierte Uhr läuft 15 Simulationsminuten pro realer Minute.
 SIM_HOURS_PER_REAL_SECOND = SLOT_FRACTION_OF_HOUR / 60.0
 
-# A gap larger than this between consecutive rows means the simulator was
-# restarted, which resets both the simulated clock and the battery SoC.
+# Eine grössere Lücke zwischen zwei Zeilen bedeutet, dass der Simulator neu
+# gestartet wurde - dabei springen simulierte Uhr und Batterie-SoC zurück.
 SESSION_GAP_SECONDS = 300
 
-# How far around the clock to look for a populated neighbour before giving up
-# and using the global mean, in bins. Tuned on the current history: 2 and 4 are
-# both measurably worse, because beyond ~3 bins the search starts reaching over
-# a step boundary into a different load plateau.
+# Wie weit (in Bins) auf der Stundenachse nach einem belegten Nachbarn gesucht
+# wird, bevor auf den globalen Mittelwert zurückgefallen wird. Auf der
+# vorhandenen Historie kalibriert: 2 und 4 sind beide messbar schlechter, weil
+# die Suche ab ~3 Bins über eine Stufengrenze in ein anderes Lastplateau greift.
 MAX_NEIGHBOUR_DISTANCE = 3
 
 
@@ -64,12 +70,12 @@ class Sample:
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  Loading
+#  Laden der Historie
 # ─────────────────────────────────────────────────────────────────────
 
 def load_history(db_path: Path = DB_PATH,
                  gap_seconds: int = SESSION_GAP_SECONDS) -> List[Sample]:
-    """Reads meter+weather history and tags each row with a session id."""
+    """Liest Meter- und Wetterhistorie und markiert jede Zeile mit einer Session-ID."""
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute("""
             SELECT m.household_id, m.timestamp, m.sim_hour, m.sim_dayofweek,
@@ -80,7 +86,7 @@ def load_history(db_path: Path = DB_PATH,
             ORDER BY m.timestamp
         """).fetchall()
 
-    # Sessions are global: every household shares the same simulator process.
+    # Sessions gelten global: alle Haushalte teilen sich denselben Simulator-Prozess.
     distinct_ts = sorted({r[1] for r in rows})
     session_of: Dict[int, int] = {}
     session = 0
@@ -110,17 +116,18 @@ def load_household_config(config_path: Path = CONFIG_PATH) -> Dict[str, dict]:
 def current_sim_hour(db_path: Path = DB_PATH,
                      max_staleness_seconds: int = 180) -> float:
     """
-    The simulator's *simulated* hour right now, extrapolated from the newest
-    row in the history DB.
+    Die aktuelle *simulierte* Stunde, extrapoliert aus der jüngsten Zeile der
+    Historien-Datenbank.
 
-    The simulated clock lives in the oracle_writer process's memory and cannot
-    be recomputed from wall time - it resets on every restart (to 18.0, not 0.0,
-    because oracle_writer offsets start_real_time by 6 hours). Reading the last
-    persisted value and extrapolating forward is the only correct source.
+    Die simulierte Uhr lebt nur im Prozessspeicher von oracle_writer.py und lässt
+    sich nicht aus der realen Uhrzeit ableiten - sie springt bei jedem Neustart
+    zurück (auf 18.0, nicht 0.0, weil oracle_writer start_real_time um 6 Stunden
+    vorverlegt). Den letzten persistierten Wert zu lesen und vorwärts zu
+    extrapolieren ist die einzige korrekte Quelle.
 
-    Raises if the history is stale, which means oracle_writer is not running.
-    Extrapolating across a restart would silently produce a wrong hour, so this
-    fails loudly instead.
+    Wirft eine Exception, wenn die Historie veraltet ist - dann läuft
+    oracle_writer.py nicht. Über einen Neustart hinweg zu extrapolieren würde
+    still eine falsche Stunde liefern, deshalb scheitert die Funktion laut.
     """
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
@@ -141,25 +148,27 @@ def current_sim_hour(db_path: Path = DB_PATH,
 
 
 def sim_hour_after_slots(sim_hour: float, slots: int) -> float:
-    """Simulated hour `slots` slots into the future."""
+    """Simulierte Stunde, `slots` Slots in der Zukunft."""
     return (sim_hour + slots * SLOT_FRACTION_OF_HOUR) % 24.0
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  Model
+#  Modell
 # ─────────────────────────────────────────────────────────────────────
 
 class ForecastModel:
     """
-    Consumption: mean normalised load factor per hour bin, pooled over all
-    households. Prediction rescales by the household's baseline.
+    Verbrauch: mittlerer normierter Lastfaktor je Stunden-Bin, über alle
+    Haushalte gepoolt. Die Vorhersage skaliert ihn wieder mit der Grundlast des
+    jeweiligen Haushalts hoch.
 
-    Production: single slope through the origin on irradiance, pooled over all
-    PV households after normalising by peak_kwp.
+    Erzeugung: eine einzige Steigung durch den Ursprung über der Einstrahlung,
+    über alle PV-Haushalte gepoolt (vorher auf peak_kwp normiert).
 
-    Irradiance: mean per hour bin, so a forecast for a future slot does not have
-    to rely on the current reading. Learned from history rather than reproducing
-    the simulator's sine formula, so it stays honest about being a model.
+    Einstrahlung: Mittelwert je Stunden-Bin, damit eine Prognose für einen
+    künftigen Slot nicht auf den aktuellen Messwert angewiesen ist. Bewusst aus
+    der Historie gelernt, statt die Sinusformel des Simulators nachzubauen - so
+    bleibt es ein echtes Modell und kein abgeschriebener Generator.
     """
 
     def __init__(self, n_bins: int = 24):
@@ -174,7 +183,7 @@ class ForecastModel:
         self.is_trained = False
         self._estimate_cache: Dict[int, Tuple[float, str]] = {}
 
-    # ── helpers ──────────────────────────────────────────────────────
+    # ── Hilfsfunktionen ──────────────────────────────────────────────
 
     def _bin(self, sim_hour: float) -> int:
         return int(sim_hour / 24.0 * self.n_bins) % self.n_bins
@@ -185,12 +194,13 @@ class ForecastModel:
 
     def _nearest_populated(self, b: int, table: Dict[int, float]) -> Optional[float]:
         """
-        Mean of the closest populated bin(s) on the circular hour axis.
+        Mittelwert des/der nächstgelegenen belegten Bins auf der zyklischen
+        Stundenachse.
 
-        Nearest-neighbour rather than the global mean because the load profile is
-        piecewise constant with wide plateaus - an empty bin is far more likely to
-        sit inside a plateau than on one of its edges, so its neighbour is usually
-        the exact right answer.
+        Nächster Nachbar statt globalem Mittelwert, weil das Lastprofil
+        stückweise konstant ist und breite Plateaus hat: ein leeres Bin liegt
+        viel wahrscheinlicher mitten in einem Plateau als an dessen Rand, sein
+        Nachbar ist also meist exakt die richtige Antwort.
         """
         for dist in range(1, MAX_NEIGHBOUR_DISTANCE + 1):
             hits = [
@@ -203,7 +213,8 @@ class ForecastModel:
         return None
 
     def _estimate(self, b: int) -> Tuple[float, str]:
-        """Load factor for a bin, plus how it was obtained."""
+        """Lastfaktor eines Bins und die Angabe, wie er zustande kam
+        (ok / sparse / interpolated / fallback)."""
         if b in self._estimate_cache:
             return self._estimate_cache[b]
 
@@ -219,7 +230,8 @@ class ForecastModel:
         return result
 
     def estimate_irradiance(self, sim_hour: float) -> float:
-        """Expected irradiance at a simulated hour, for forecasting ahead."""
+        """Erwartete Einstrahlung zu einer simulierten Stunde - Basis für die
+        Vorausprognose."""
         b = self._bin(sim_hour)
         if b in self.bin_irradiance:
             return self.bin_irradiance[b]
@@ -227,17 +239,17 @@ class ForecastModel:
         return neighbour if neighbour is not None else self.global_irradiance
 
     def _consumption_scale(self, household_id: str) -> float:
-        """Wh per unit load factor for this household."""
+        """Wh je Einheit Lastfaktor für diesen Haushalt."""
         base_kwh = self.households[household_id]["base_consumption_kwh_per_hour"]
         return base_kwh * 1000.0 * SLOT_FRACTION_OF_HOUR
 
-    # ── training ─────────────────────────────────────────────────────
+    # ── Training ─────────────────────────────────────────────────────
 
     def train(self, samples: List[Sample], households: Dict[str, dict]) -> None:
         self.households = households
 
-        # Consumption: normalise out the per-household baseline so every
-        # household contributes to the same shared time-of-day shape.
+        # Verbrauch: die Grundlast je Haushalt herausnormieren, damit jeder
+        # Haushalt zur selben gemeinsamen Tagesform beiträgt.
         by_bin: Dict[int, List[float]] = defaultdict(list)
         all_factors: List[float] = []
         for s in samples:
@@ -252,15 +264,17 @@ class ForecastModel:
             raise ValueError("No usable consumption samples")
 
         self.global_factor = sum(all_factors) / len(all_factors)
-        # Keep every populated bin, however thin - shrinkage in _estimate()
-        # decides how much to trust it. Discarding 1-2 sample bins outright
-        # throws away real signal in favour of a much worse global mean.
+        # Jedes belegte Bin behalten, auch dünn besetzte - _estimate() entscheidet
+        # über das Vertrauen (Kennzeichen "sparse"). Bins mit 1-2 Messwerten zu
+        # verwerfen würde echtes Signal zugunsten eines viel schlechteren
+        # globalen Mittelwerts wegwerfen.
         self.bin_factor = {b: sum(v) / len(v) for b, v in by_bin.items()}
         self.bin_count = {b: len(v) for b, v in by_bin.items()}
         self._estimate_cache.clear()
 
-        # Irradiance per bin. Weather is shared across households, so deduplicate
-        # by timestamp - otherwise every reading is counted four times.
+        # Einstrahlung je Bin. Das Wetter gilt für alle Haushalte gemeinsam,
+        # deshalb nach Zeitstempel deduplizieren - sonst zählt jeder Messwert
+        # viermal.
         irr_by_bin: Dict[int, List[float]] = defaultdict(list)
         seen_ts = set()
         for s in samples:
@@ -272,9 +286,9 @@ class ForecastModel:
         all_irr = [x for v in irr_by_bin.values() for x in v]
         self.global_irradiance = sum(all_irr) / len(all_irr) if all_irr else 0.0
 
-        # Production: least squares through the origin, y = slope * irradiance,
-        # on production normalised by peak_kwp. Daylight rows only - night rows
-        # are structurally zero and would just inflate the fit quality.
+        # Erzeugung: Kleinste Quadrate durch den Ursprung, y = slope * Einstrahlung,
+        # auf der mit peak_kwp normierten Erzeugung. Nur Tageszeilen - Nachtzeilen
+        # sind strukturell null und würden die Fit-Güte nur künstlich aufblähen.
         sxy = sxx = 0.0
         for s in samples:
             peak = self.households[s.household_id]["pv_peak_kwp"]
@@ -288,16 +302,17 @@ class ForecastModel:
 
         self.is_trained = True
 
-    # ── prediction ───────────────────────────────────────────────────
+    # ── Vorhersage ───────────────────────────────────────────────────
 
     def predict(self, household_id: str, sim_hour: float,
                 irradiance: Optional[float] = None) -> Tuple[float, float, str]:
         """
-        Returns (consumption_wh, production_wh, confidence).
+        Liefert (consumption_wh, production_wh, confidence).
 
-        Pass a measured `irradiance` to score the model against known weather.
-        Omit it when forecasting a future slot, where the weather is not known
-        yet and has to be projected from the simulated hour.
+        Mit gemessener `irradiance` aufrufen, um das Modell gegen bekanntes
+        Wetter zu bewerten. Beim Prognostizieren eines künftigen Slots weglassen -
+        dort ist das Wetter noch unbekannt und wird aus der simulierten Stunde
+        geschätzt.
         """
         if not self.is_trained:
             raise RuntimeError("Model not trained")
@@ -314,16 +329,16 @@ class ForecastModel:
         return consumption, production, confidence
 
     def coverage(self) -> Tuple[int, int]:
-        """(bins with at least one observation, total bins)."""
+        """(Bins mit mindestens einer Beobachtung, Bins insgesamt)."""
         return len(self.bin_factor), self.n_bins
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  Validation
+#  Validierung
 # ─────────────────────────────────────────────────────────────────────
 
 def _mae_mape(pairs: List[Tuple[float, float]]) -> Tuple[float, Optional[float]]:
-    """pairs of (actual, predicted). MAPE skips zero actuals."""
+    """Paare aus (Ist, Prognose). MAPE überspringt Ist-Werte von 0."""
     if not pairs:
         return 0.0, None
     mae = sum(abs(a - p) for a, p in pairs) / len(pairs)
@@ -335,13 +350,13 @@ def _mae_mape(pairs: List[Tuple[float, float]]) -> Tuple[float, Optional[float]]
 def validate(samples: List[Sample], households: Dict[str, dict],
              n_bins: int = 24) -> None:
     """
-    Leave-one-session-out cross-validation.
+    Kreuzvalidierung nach dem Leave-one-session-out-Prinzip.
 
-    Every session takes a turn as the test set, so all rows are scored and the
-    estimate does not hinge on which single session happened to be held out.
-    Splitting by session rather than at random is essential: consecutive slots
-    inside one bin are near-duplicates, so a random split leaks and reports a
-    fictitiously good score.
+    Jede Session ist einmal Testmenge, dadurch werden alle Zeilen bewertet und
+    das Ergebnis hängt nicht daran, welche einzelne Session zufällig
+    zurückgehalten wurde. Der Split nach Session statt zufällig ist
+    entscheidend: aufeinanderfolgende Slots im selben Bin sind nahezu identisch,
+    ein Zufallssplit leckt und meldet eine fiktiv gute Bewertung.
     """
     sizes: Dict[int, int] = defaultdict(int)
     for s in samples:
@@ -381,15 +396,16 @@ def validate(samples: List[Sample], households: Dict[str, dict],
             cons_base.append((s.consumption_wh, baseline.get(s.household_id, 0.0)))
             if households[s.household_id]["pv_peak_kwp"] > 0:
                 prod_model.append((s.production_wh, p))
-                # What the live path actually does: no measured weather, so the
-                # irradiance has to be projected from the simulated hour too.
+                # So arbeitet der Live-Pfad wirklich: kein gemessenes Wetter,
+                # die Einstrahlung muss ebenfalls aus der simulierten Stunde
+                # geschätzt werden.
                 _, p_proj, _ = model.predict(s.household_id, s.sim_hour)
                 prod_projected.append((s.production_wh, p_proj))
 
     print(f"cross-validated over {len(sizes)} folds, {len(cons_model)} scored rows\n")
 
-    # Coverage is reported from a model fitted on everything, since that is what
-    # would actually be deployed.
+    # Die Abdeckung wird an einem Modell gemessen, das auf allen Daten trainiert
+    # wurde - genau dieses Modell läuft später produktiv.
     full = ForecastModel(n_bins=n_bins)
     full.train(samples, households)
     filled, total = full.coverage()
@@ -437,7 +453,7 @@ def validate(samples: List[Sample], households: Dict[str, dict],
 def train_from_db(db_path: Path = DB_PATH,
                   config_path: Path = CONFIG_PATH,
                   n_bins: int = 24) -> ForecastModel:
-    """Convenience entry point for ai_forecast.py."""
+    """Bequemer Einstiegspunkt für ai_forecast.py: laden, trainieren, fertig."""
     samples = load_history(db_path)
     households = load_household_config(config_path)
     model = ForecastModel(n_bins=n_bins)

@@ -8,13 +8,20 @@ ob die Batterie geladen, entladen oder im Idle-Zustand bleiben soll.
 Die Entscheidung wird via BatteryManager.decideAction() on-chain
 protokolliert und der simulierte SoC im Oracle entsprechend angepasst.
 
-Hinweis: Die Entscheidungslogik ist in zwei Varianten verfügbar:
+Hinweis: Die Entscheidungslogik ist in zwei Varianten vorgesehen:
   - In Solidity (BatteryManager.sol → decideAction)
   - In Python (hier)
 
-Teams können WAHLWEISE eine der beiden Varianten implementieren oder beide
-kombinieren. Eine Off-Chain-Lösung ist für komplexere Logik einfacher,
-On-Chain ist transparenter und prüfbar.
+In diesem Projekt liegt die produktive Strategie ON-CHAIN in
+BatteryManager.sol: P2PEnergyMarket.settleSlot() ruft decideAction() live je
+Slot auf, sobald setBatteryManager() gesetzt ist. Damit ist die Entscheidung
+transparent und nachprüfbar, und sie gehört garantiert zum selben Slot wie die
+Messdaten, mit denen abgerechnet wird.
+
+decide_action() unten bleibt deshalb ein Platzhalter. Das Skript ist nützlich
+als reines Lese-/Anzeige-Werkzeug (CLI-Sicht auf SoC und Wetter, ohne
+Gaskosten) - wer die Entscheidung hier treffen will, muss sie zusätzlich
+on-chain protokollieren (siehe TODO in der Hauptschleife).
 """
 
 import json
@@ -84,6 +91,11 @@ def decide_action(meter: dict, battery: dict, weather: dict) -> tuple:
 # ─────────────────────────────────────────────────────────────────────
 
 def main():
+    """Liest je Slot Meter-, Batterie- und Wetterdaten aller Haushalte mit
+    Batterie aus dem Oracle und gibt die Entscheidung auf der Konsole aus.
+
+    Reiner Lesepfad: es wird nichts on-chain geschrieben (siehe Modul-Docstring).
+    """
     with open(CONFIG_PATH) as f:
         config = json.load(f)
 

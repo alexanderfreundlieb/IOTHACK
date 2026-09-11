@@ -7,7 +7,7 @@ import {P2PEnergyMarket} from "./P2PEnergyMarket.sol";
 import {IncentiveController} from "./IncentiveController.sol";
 import {IEnergyStablecoin} from "./interfaces/IEnergyStablecoin.sol";
 
-/// @dev Minimaler ERC-20-Mock, genau genug fuer IEnergyStablecoin.
+/// @dev Minimaler ERC-20-Mock, genau genug für IEnergyStablecoin.
 contract MockStablecoin is IEnergyStablecoin {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -45,8 +45,8 @@ contract MockStablecoin is IEnergyStablecoin {
 
 /**
  * @title P2PEnergyMarketTest
- * @notice Phase 3: prueft, dass settleSlot() den Incentive-Preismultiplikator
- *         tatsaechlich auf den Konsumenten anwendet.
+ * @notice Phase 3: prüft, dass settleSlot() den Incentive-Preismultiplikator
+ *         tatsächlich auf den Konsumenten anwendet.
  * @dev Deployt OracleStorage, IncentiveController und P2PEnergyMarket selbst
  *      und ist damit owner + authorizedOracle + authorizedAI zugleich.
  */
@@ -84,7 +84,7 @@ contract P2PEnergyMarketTest is Test {
         token.approve(address(market), type(uint256).max);
     }
 
-    /// @dev Baut fuer GOOD_CONSUMER einen hohen und fuer BAD_CONSUMER einen
+    /// @dev Baut für GOOD_CONSUMER einen hohen und für BAD_CONSUMER einen
     ///      niedrigen Reputationsscore auf, bevor gehandelt wird.
     function _buildDivergentScores() internal {
         for (uint256 s = 1; s <= 10; s++) {
@@ -106,7 +106,7 @@ contract P2PEnergyMarketTest is Test {
         market.settleSlot();
     }
 
-    // ── Ohne IncentiveController: unveraenderter Basispreis ────────────
+    // ── Ohne IncentiveController: unveränderter Basispreis ────────────
 
     function test_WithoutIncentiveController_UsesBasePrice() public {
         _settleOneSlot(2000, 1000, 1000);
@@ -138,7 +138,7 @@ contract P2PEnergyMarketTest is Test {
         assertGt(badPaid, basePaid, "schlechter Haushalt zahlt mehr als Basispreis");
         assertLt(goodPaid, badPaid, "guter Haushalt zahlt weniger als schlechter");
 
-        // Exakte Rechnung fuer GOOD_CONSUMER nachvollziehen.
+        // Exakte Rechnung für GOOD_CONSUMER nachvollziehen.
         uint256 expectedGood = (1000 * PRICE_PER_KWH * goodMultiplier) / 1000 / 1000;
         assertEq(goodPaid, expectedGood);
     }
@@ -148,9 +148,9 @@ contract P2PEnergyMarketTest is Test {
         _buildDivergentScores();
         _settleOneSlot(2000, 1000, 1000);
 
-        // Der Multiplikator wirkt nur auf den Kaeufer - der Produzent bekommt
+        // Der Multiplikator wirkt nur auf den Käufer - der Produzent bekommt
         // in Summe trotzdem genau das, was beide Konsumenten bezahlt haben
-        // (keine zusaetzliche Marge/Abzug beim Produzenten selbst).
+        // (keine zusätzliche Marge/Abzug beim Produzenten selbst).
         uint256 goodPaid = 1_000_000_000 - token.balanceOf(GOOD_CONSUMER);
         uint256 badPaid = 1_000_000_000 - token.balanceOf(BAD_CONSUMER);
         assertEq(token.balanceOf(PRODUCER), goodPaid + badPaid);

@@ -6,14 +6,14 @@ import {IncentiveController} from "./IncentiveController.sol";
 
 /**
  * @title IncentiveControllerTest
- * @notice Phase 3: prueft Score-Update und Preis-Multiplikator.
+ * @notice Phase 3: prüft Score-Update und Preis-Multiplikator.
  * @dev Der Test-Contract deployt den Controller selbst und ist damit owner
  *      und autorisierte AI - er kann Prognosen und Ist-Werte schreiben.
  */
 contract IncentiveControllerTest is Test {
     IncentiveController ic;
 
-    address constant GOOD = address(0xA1);   // haelt sich an die Prognose
+    address constant GOOD = address(0xA1);   // hält sich an die Prognose
     address constant BAD  = address(0xB2);   // weicht stark ab
     address constant NONE = address(0xC3);   // nie prognostiziert
 
@@ -23,7 +23,7 @@ contract IncentiveControllerTest is Test {
 
     // ── Helpers ──────────────────────────────────────────────────────
 
-    /// @dev Ein kompletter Slot: Prognose rein, Ist-Wert rein, Score faellt an.
+    /// @dev Ein kompletter Slot: Prognose rein, Ist-Wert rein, Score fällt an.
     function _slot(
         address household,
         uint256 slot,
@@ -67,7 +67,7 @@ contract IncentiveControllerTest is Test {
     // ── Bestrafung ───────────────────────────────────────────────────
 
     function test_BadForecast_LowersScoreAndRaisesPrice() public {
-        // 50% Abweichung -> ueber LOOSE_BAND (250 Promille)
+        // 50% Abweichung -> über LOOSE_BAND (250 Promille)
         _slot(BAD, 1, 1000, 1500);
         assertEq(ic.getReputationScore(BAD), 440, "500 - SCORE_PENALTY");
         assertGt(ic.getPriceMultiplier(BAD), 1000, "schlechter Score = Aufschlag");
@@ -84,7 +84,7 @@ contract IncentiveControllerTest is Test {
     // ── Neutrale Zone ────────────────────────────────────────────────
 
     function test_MiddleDeviation_LeavesScoreUnchanged() public {
-        // 15% Abweichung: ueber TIGHT_BAND, unter LOOSE_BAND
+        // 15% Abweichung: über TIGHT_BAND, unter LOOSE_BAND
         _slot(GOOD, 1, 1000, 1150);
         assertEq(ic.getReputationScore(GOOD), 500, "neutrale Zone");
     }
@@ -92,7 +92,7 @@ contract IncentiveControllerTest is Test {
     // ── Regressionen: die beiden Fallen im Starter-Code ──────────────
 
     /// @dev score==0 darf NICHT als "neuer Haushalt" gelesen werden, sonst
-    ///      bekommt der schlechteste Haushalt beim naechsten Forecast 500
+    ///      bekommt der schlechteste Haushalt beim nächsten Forecast 500
     ///      geschenkt.
     function test_ZeroScore_IsNotResetByNextForecast() public {
         for (uint256 s = 1; s <= 20; s++) {
@@ -105,8 +105,8 @@ contract IncentiveControllerTest is Test {
         assertEq(ic.getPriceMultiplier(BAD), 1200, "Aufschlag bleibt");
     }
 
-    /// @dev Ein wiederholtes submitActual() fuer denselben Slot darf den Score
-    ///      nicht erneut veraendern (Retry-Sicherheit).
+    /// @dev Ein wiederholtes submitActual() für denselben Slot darf den Score
+    ///      nicht erneut verändern (Retry-Sicherheit).
     function test_RepeatedActual_ScoresOnlyOnce() public {
         ic.submitForecast(GOOD, 1, 1000, 0);
         ic.submitActual(GOOD, 1, 1000, 0);
@@ -126,7 +126,7 @@ contract IncentiveControllerTest is Test {
         assertEq(ic.getPriceMultiplier(GOOD), 1000);
     }
 
-    /// @dev Uebersprungener Slot: Oracle hat nie Messwerte geschrieben.
+    /// @dev Übersprungener Slot: Oracle hat nie Messwerte geschrieben.
     function test_ZeroActual_DoesNotScore() public {
         ic.submitForecast(GOOD, 1, 1000, 0);
         ic.submitActual(GOOD, 1, 0, 0);

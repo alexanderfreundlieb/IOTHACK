@@ -82,6 +82,8 @@ def deploy(contract_name: str, constructor_args: list):
 
 
 def main():
+    """Wertet die Kommandozeile aus, deployt den Contract und nennt den
+    config.json-Schlüssel, unter dem die neue Adresse einzutragen ist."""
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)

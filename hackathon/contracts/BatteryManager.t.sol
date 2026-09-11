@@ -8,7 +8,7 @@ import {IBatteryManager} from "./interfaces/IBatteryManager.sol";
 
 /**
  * @title BatteryManagerTest
- * @notice Phase 2: prueft die Lade-/Entladestrategie inkl. Wetter-Adaption.
+ * @notice Phase 2: prüft die Lade-/Entladestrategie inkl. Wetter-Adaption.
  * @dev Der Test-Contract deployt OracleStorage selbst und ist damit
  *      automatisch dessen owner + authorizedOracle - er kann also Meter-,
  *      Batterie- und Wetterdaten wie das Python-Oracle schreiben.
@@ -54,7 +54,7 @@ contract BatteryManagerTest is Test {
         oracle.updateBattery(household, socPercent, capacityWh, RATE_A);
     }
 
-    /// @dev Rueckt einen Slot vor - decideAction() entscheidet nur einmal pro Slot.
+    /// @dev Rückt einen Slot vor - decideAction() entscheidet nur einmal pro Slot.
     function _nextSlot() internal {
         vm.warp(block.timestamp + oracle.SLOT_DURATION());
         oracle.updateSlot();
@@ -63,7 +63,7 @@ contract BatteryManagerTest is Test {
     // ── Laden ────────────────────────────────────────────────────
 
     function test_ChargeOnSurplus() public {
-        // Ueberschuss 2000 Wh, SoC 50% -> alles passt in die Batterie
+        // Überschuss 2000 Wh, SoC 50% -> alles passt in die Batterie
         _feed(HOUSE_A, 3_000, 1_000, 50, CAP_A, 300, 40);
 
         (IBatteryManager.Action action, uint256 amount) = bm.decideAction(HOUSE_A);
@@ -73,7 +73,7 @@ contract BatteryManagerTest is Test {
     }
 
     function test_ChargeCappedByMaxRate() public {
-        // Ueberschuss 5000 Wh > maxRate 3000 Wh -> Rest geht an den Markt
+        // Überschuss 5000 Wh > maxRate 3000 Wh -> Rest geht an den Markt
         _feed(HOUSE_A, 6_000, 1_000, 50, CAP_A, 700, 10);
 
         (, uint256 amount) = bm.decideAction(HOUSE_A);
@@ -90,7 +90,7 @@ contract BatteryManagerTest is Test {
     }
 
     function test_IdleWhenBatteryFull() public {
-        // SoC == MAX_SOC -> Ueberschuss bleibt im Netto und wird verkauft
+        // SoC == MAX_SOC -> Überschuss bleibt im Netto und wird verkauft
         _feed(HOUSE_A, 4_000, 1_000, bm.MAX_SOC(), CAP_A, 700, 10);
 
         (IBatteryManager.Action action, uint256 amount) = bm.decideAction(HOUSE_A);
@@ -111,7 +111,7 @@ contract BatteryManagerTest is Test {
     }
 
     function test_CloudyWeatherRaisesReserveAndLimitsDischarge() public {
-        // Bewoelkung 85% -> Reserve 40% statt 20%
+        // Bewölkung 85% -> Reserve 40% statt 20%
         // nutzbar = 10000 * (50-40) / 100 = 1000 Wh, obwohl 2000 Wh fehlen
         _feed(HOUSE_A, 0, 2_000, 50, CAP_A, 50, 85);
 
@@ -121,7 +121,7 @@ contract BatteryManagerTest is Test {
     }
 
     function test_SunnyWeatherAllowsDeeperDischarge() public {
-        // SoC 15%: bei Basis-Reserve (20%) waere das IDLE.
+        // SoC 15%: bei Basis-Reserve (20%) wäre das IDLE.
         // Hohe Strahlung -> Reserve 10% -> nutzbar = 10000 * 5 / 100 = 500 Wh
         _feed(HOUSE_A, 0, 2_000, 15, CAP_A, 700, 10);
 
@@ -139,11 +139,11 @@ contract BatteryManagerTest is Test {
         assertEq(amount, 0);
     }
 
-    // ── Randfaelle ───────────────────────────────────────────────
+    // ── Randfälle ───────────────────────────────────────────────
 
     function test_IdleForHouseholdWithoutBattery() public {
         // Reiner Konsument (capacityWh = 0) darf NICHT reverten,
-        // sonst blockiert settleSlot() den Slot fuer alle.
+        // sonst blockiert settleSlot() den Slot für alle.
         _feed(HOUSE_C, 0, 2_000, 0, 0, 100, 40);
 
         (IBatteryManager.Action action, uint256 amount) = bm.decideAction(HOUSE_C);
@@ -189,7 +189,7 @@ contract BatteryManagerTest is Test {
     }
 
     function test_ChargeDischargeCycleAcrossSlots() public {
-        // Slot 1: Sonne, Ueberschuss -> laden
+        // Slot 1: Sonne, Überschuss -> laden
         _nextSlot();
         _feed(HOUSE_A, 3_000, 1_000, 50, CAP_A, 700, 10);
         (IBatteryManager.Action a1,) = bm.decideAction(HOUSE_A);
@@ -201,11 +201,11 @@ contract BatteryManagerTest is Test {
         (IBatteryManager.Action a2,) = bm.decideAction(HOUSE_A);
         assertEq(uint8(a2), uint8(IBatteryManager.Action.DISCHARGE));
 
-        // Beide Zaehler sind gewachsen -> Lade-/Entladezyklus nachgewiesen
+        // Beide Zähler sind gewachsen -> Lade-/Entladezyklus nachgewiesen
         assertEq(bm.totalChargedWh(HOUSE_A), 2_000);
         assertEq(bm.totalDischargedWh(HOUSE_A), 2_500);
 
-        // lastDecision haelt den Slot der letzten Entscheidung fest
+        // lastDecision hält den Slot der letzten Entscheidung fest
         BatteryManager.Decision memory d = bm.getLastDecision(HOUSE_A);
         assertEq(d.slot, oracle.getCurrentSlot());
         assertEq(d.amountWh, 2_500);
@@ -215,7 +215,7 @@ contract BatteryManagerTest is Test {
         // Demo-Anforderung: mindestens 2 Haushalte mit Batterie
         oracle.updateWeather(300, 200, 40);
 
-        oracle.updateMeter(HOUSE_A, 1_000, 3_000);          // Ueberschuss
+        oracle.updateMeter(HOUSE_A, 1_000, 3_000);          // Überschuss
         oracle.updateBattery(HOUSE_A, 50, CAP_A, RATE_A);
 
         oracle.updateMeter(HOUSE_B, 2_000, 0);              // Defizit
@@ -234,7 +234,7 @@ contract BatteryManagerTest is Test {
     }
 
     function test_BatteryStatusExposesWeatherReserve() public {
-        _feed(HOUSE_A, 0, 2_000, 50, CAP_A, 50, 85);   // bewoelkt
+        _feed(HOUSE_A, 0, 2_000, 50, CAP_A, 50, 85);   // bewölkt
         bm.decideAction(HOUSE_A);
 
         (

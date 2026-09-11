@@ -8,11 +8,19 @@ import "./interfaces/IIncentiveController.sol";
  * @notice Phase 3 (OPTIONAL): Belohnt Haushalte mit besseren Preisen,
  *         wenn ihr tatsächlicher Verbrauch der AI-Prognose entspricht.
  *
- * @dev STARTER-CODE - Teams designen das Incentive-Modell selbst.
- *      Mögliche Ansätze:
- *        A) Direkter Preismultiplikator (einfach)
- *        B) Reputationsscore über Zeit (mittel)
- *        C) Community-Pool mit geteiltem Bonus (anspruchsvoll)
+ * @dev Umgesetztes Incentive-Design: Reputationsscore über Zeit.
+ *        1. `ai_forecast.py` schreibt pro Haushalt und Slot eine Prognose
+ *           (submitForecast) und nach Ablauf des Slots den Ist-Wert
+ *           (submitActual).
+ *        2. Beim Ist-Wert vergleicht _updateScoreForSlot() beides und passt den
+ *           Reputationsscore an: Abweichung unter TIGHT_BAND (10%) belohnt mit
+ *           +SCORE_REWARD, Abweichung über LOOSE_BAND (25%) bestraft mit
+ *           -SCORE_PENALTY, dazwischen liegt eine neutrale Zone.
+ *        3. getPriceMultiplier() bildet den Score (0-1000, Start 500) linear auf
+ *           einen Preisfaktor zwischen 800 und 1200 Promille ab, also ±20%.
+ *
+ *      Bewertet wird ausschliesslich der Verbrauch, nicht die PV-Erzeugung -
+ *      Begründung siehe _updateScoreForSlot().
  *
  *      Das Python-Skript `ai_forecast.py` schreibt Prognosen in diesen Contract.
  *      Bei der Settlement-Phase liest P2PEnergyMarket den Preisfaktor aus
@@ -54,16 +62,16 @@ contract IncentiveController is IIncentiveController {
     mapping(address => uint256) public reputationScore;
 
     /// @notice Haushalt hat einen Score erhalten.
-    /// @dev Notwendig, weil score==0 ein gueltiger (schlechtester) Score ist.
-    ///      Ohne dieses Flag wuerde "0" gleichzeitig "neu" bedeuten und ein
-    ///      maximal schlecht bewerteter Haushalt bekaeme beim naechsten
-    ///      submitForecast() den Startwert 500 zurueck - eine Gratis-Amnestie.
+    /// @dev Notwendig, weil score==0 ein gültiger (schlechtester) Score ist.
+    ///      Ohne dieses Flag würde "0" gleichzeitig "neu" bedeuten und ein
+    ///      maximal schlecht bewerteter Haushalt bekäme beim nächsten
+    ///      submitForecast() den Startwert 500 zurück - eine Gratis-Amnestie.
     mapping(address => bool) public initialized;
 
-    /// @notice Slot wurde fuer diesen Haushalt bereits bewertet.
+    /// @notice Slot wurde für diesen Haushalt bereits bewertet.
     /// @dev Macht die Bewertung idempotent: ein wiederholtes submitActual()
     ///      (z.B. Retry nach einem Timeout, obwohl die TX doch durchging)
-    ///      darf den Score nicht ein zweites Mal veraendern.
+    ///      darf den Score nicht ein zweites Mal verändern.
     mapping(address => mapping(uint256 => bool)) public scored;
 
     /// @notice Basispreis-Multiplikator in Promille (1000 = 100%, also normaler Preis)
@@ -83,19 +91,19 @@ contract IncentiveController is IIncentiveController {
     /// @dev Kalibriert auf das Rauschen der Simulation. Der Verbrauch wird mit
     ///      uniform(0.85, 1.15) multipliziert, was rund 8% mittlere Abweichung
     ///      erzeugt - selbst eine perfekte Prognose kann nicht darunter kommen.
-    ///      Ein Band von 10% ist damit knapp ueber dem Rauschboden: erreichbar
+    ///      Ein Band von 10% ist damit knapp über dem Rauschboden: erreichbar
     ///      mit guter Prognose, aber nicht geschenkt.
     uint256 public constant TIGHT_BAND = 100;
 
     /// @notice Abweichung (Promille), ab der bestraft wird: 250 = 25%.
     uint256 public constant LOOSE_BAND = 250;
 
-    /// @notice Score-Aenderung pro bewertetem Slot.
+    /// @notice Score-Änderung pro bewertetem Slot.
     /// @dev Bewusst asymmetrisch (Strafe doppelt so hoch wie Belohnung): mit
     ///      einer brauchbaren Prognose liegen die meisten Slots im Belohnungs-
-    ///      band, und ein symmetrisches Update wuerde alle Haushalte binnen
+    ///      band, und ein symmetrisches Update würde alle Haushalte binnen
     ///      weniger Stunden auf MAX_SCORE festnageln - der Unterschied zwischen
-    ///      den Haushalten, den das Incentive sichtbar machen soll, verschwaende.
+    ///      den Haushalten, den das Incentive sichtbar machen soll, verschwände.
     uint256 public constant SCORE_REWARD = 30;
     uint256 public constant SCORE_PENALTY = 60;
 
@@ -131,6 +139,10 @@ contract IncentiveController is IIncentiveController {
         authorizedAI[msg.sender] = true;
     }
 
+    /// @notice Autorisiert eine Adresse, Prognosen und Ist-Werte einzureichen.
+    /// @dev Gegenstück zu OracleStorage.authorizeOracle(): nur die AI-Wallet
+    ///      von `ai_forecast.py` darf schreiben, sonst könnte jeder sich
+    ///      selbst einen guten Score verschaffen.
     function authorizeAI(address ai) external onlyOwner {
         authorizedAI[ai] = true;
         emit AIAuthorized(ai);
@@ -140,6 +152,11 @@ contract IncentiveController is IIncentiveController {
     //  Prognose & Ist-Wert eintragen
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Trägt die Prognose für einen künftigen Slot ein.
+    /// @dev Muss VOR submitActual() für denselben Slot erfolgen, sonst gibt es
+    ///      nichts zu bewerten und _updateScoreForSlot() bricht ab.
+    /// @param slot Slot-Nummer aus OracleStorage.getCurrentSlot(), auf die sich
+    ///        die Prognose bezieht (ai_forecast.py prognostiziert im Voraus).
     function submitForecast(
         address household,
         uint256 slot,
@@ -162,6 +179,10 @@ contract IncentiveController is IIncentiveController {
         emit ForecastSubmitted(household, slot, expectedConsumptionWh);
     }
 
+    /// @notice Trägt den gemessenen Ist-Wert eines abgelaufenen Slots ein und
+    ///         löst damit automatisch die Score-Bewertung aus.
+    /// @dev Idempotent: ein wiederholter Aufruf für denselben Slot verändert den
+    ///      Score nicht erneut (siehe `scored`).
     function submitActual(
         address household,
         uint256 slot,
@@ -185,30 +206,30 @@ contract IncentiveController is IIncentiveController {
 
     /**
      * @notice Aktualisiert den Reputationsscore basierend auf der Abweichung
-     *         zwischen Prognose und tatsaechlichem Verbrauch.
+     *         zwischen Prognose und tatsächlichem Verbrauch.
      *
      * @dev Bewertet wird ausschliesslich der VERBRAUCH, nicht die PV-Erzeugung.
-     *      Begruendung: das Incentive soll Verhalten belohnen, das der Haushalt
-     *      steuern kann. Die Erzeugung haengt an der Einstrahlung und damit am
-     *      Wetter - ein Haushalt fuer Wolken zu bestrafen waere oekonomisch
-     *      sinnlos und wuerde PV-Besitzer systematisch benachteiligen, weil die
+     *      Begründung: das Incentive soll Verhalten belohnen, das der Haushalt
+     *      steuern kann. Die Erzeugung hängt an der Einstrahlung und damit am
+     *      Wetter - ein Haushalt für Wolken zu bestrafen wäre ökonomisch
+     *      sinnlos und würde PV-Besitzer systematisch benachteiligen, weil die
      *      Wetterprognose deutlich ungenauer ist als die Lastprognose.
-     *      Die Erzeugungsprognose wird weiterhin on-chain festgehalten (fuer
+     *      Die Erzeugungsprognose wird weiterhin on-chain festgehalten (für
      *      Nachvollziehbarkeit), fliesst aber nicht in den Score ein.
      *
      *      Der Nenner (erwarteter Verbrauch) wird nie klein: das niedrigste
      *      Lastprofil der Simulation liegt bei rund 40 Wh pro Slot. Eine
-     *      Normierung auf eine kuenstliche Referenz ist deshalb nicht noetig.
+     *      Normierung auf eine künstliche Referenz ist deshalb nicht nötig.
      */
     function _updateScoreForSlot(address household, uint256 slot) internal {
         Forecast memory f = forecasts[household][slot];
         Actual memory a = actuals[household][slot];
 
-        // Ohne Prognose gibt es nichts zu bewerten. Wichtig fuer die Reihenfolge:
-        // submitForecast() muss vor submitActual() fuer denselben Slot kommen.
+        // Ohne Prognose gibt es nichts zu bewerten. Wichtig für die Reihenfolge:
+        // submitForecast() muss vor submitActual() für denselben Slot kommen.
         if (f.timestamp == 0 || f.expectedConsumptionWh == 0) return;
 
-        // Slot wurde vom Oracle uebersprungen - es existieren keine Messwerte.
+        // Slot wurde vom Oracle übersprungen - es existieren keine Messwerte.
         if (a.actualConsumptionWh == 0 && a.actualProductionWh == 0) return;
 
         // Jeden Slot nur einmal bewerten.
@@ -226,7 +247,7 @@ contract IncentiveController is IIncentiveController {
         } else if (deviation > LOOSE_BAND) {
             score = score > SCORE_PENALTY ? score - SCORE_PENALTY : 0;
         }
-        // Dazwischen: neutrale Zone, Score bleibt unveraendert.
+        // Dazwischen: neutrale Zone, Score bleibt unverändert.
 
         reputationScore[household] = score;
         emit ScoreUpdated(household, score, deviation);
